@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import subprocess
 import sys
 import threading
 from copy import deepcopy
@@ -28,6 +27,18 @@ from packages.pipeline import CancellationToken, SubprocessWorkerRunner
 from packages.plugin_sdk import ExecutionProfile, PluginManifest, StageKind, StageRequest, StageStatus
 
 from .project_store import Project, ProjectStore, ProjectStoreError, StageState
+from .sampling import (
+    SamplingConfig,
+    VideoProbe,
+    analyze_video,
+    discover_ffprobe,
+    estimate_sampling,
+    extract_selected_frames,
+    probe_video,
+    requested_count,
+    selection_config_hash,
+    validate_config,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -100,10 +111,54 @@ class PipelineController:
             kind = "video"
         else:
             raise ValueError("input must be a video or image folder")
+        sampling: dict[str, Any]
+        if kind == "video":
+            probe = probe_video(source, discover_ffprobe(self.runtime.ffmpeg))
+            config = SamplingConfig(profile=self.store.load(project_id).profile)
+            estimate = estimate_sampling(probe, config)
+            sampling = {
+                **probe.to_dict(),
+                "source_total_frames": probe.total_frames,
+                "sampling_mode": "auto",
+                "requested_frame_count": requested_count(probe, config),
+                "candidate_frame_count": estimate["estimated_candidate_count"],
+                "selected_frame_count": 0,
+                "selected_frame_indices": [],
+                "rejected_frame_indices": [],
+                "selection_config_hash": selection_config_hash(probe, config),
+                "interval_value": config.interval_value,
+                "interval_unit": config.interval_unit,
+                "manual_override": False,
+                "profile_label": config.profile.title(),
+                "timeline": [],
+                "warnings": [],
+                "analysis_status": "pending",
+                **estimate,
+            }
+        else:
+            total = len(images)
+            sampling = {
+                "source_total_frames": total,
+                "sampling_mode": "all_frames",
+                "requested_frame_count": total,
+                "candidate_frame_count": total,
+                "selected_frame_count": total,
+                "selected_frame_indices": list(range(total)),
+                "rejected_frame_indices": [],
+                "selection_config_hash": hashlib.sha256(f"images:{total}".encode()).hexdigest(),
+                "manual_override": False,
+                "profile_label": "Images",
+                "timeline": [],
+                "warnings": [],
+                "analysis_status": "complete",
+            }
         def apply(project: Project) -> None:
             if project.status == "running":
                 raise RuntimeError("cannot change input while a pipeline is running")
             project.input_path, project.input_kind, project.status = str(source), kind, "ready"
+            project.sampling = sampling
+            project.stages = {}
+            project.run_id = None
         project, _ = self.store.update_project(project_id, apply)
         return project
 
@@ -114,8 +169,152 @@ class PipelineController:
             if project.status == "running":
                 raise RuntimeError("cannot change profile while a pipeline is running")
             project.profile = profile
+            if project.input_kind == "video" and project.sampling and not project.sampling.get("manual_override", False):
+                probe = self._probe_from_project(project)
+                config = SamplingConfig(profile=profile)
+                estimate = estimate_sampling(probe, config)
+                project.sampling.update({
+                    "sampling_mode": "auto",
+                    "requested_frame_count": requested_count(probe, config),
+                    "candidate_frame_count": estimate["estimated_candidate_count"],
+                    "selected_frame_count": 0,
+                    "selected_frame_indices": [],
+                    "rejected_frame_indices": [],
+                    "selection_config_hash": selection_config_hash(probe, config),
+                    "profile_label": profile.title(),
+                    "analysis_status": "pending",
+                    "timeline": [],
+                    **estimate,
+                })
+                project.stages = {}
+                project.run_id = None
+            elif project.input_kind == "video" and project.sampling:
+                probe = self._probe_from_project(project)
+                config = SamplingConfig(
+                    mode=str(project.sampling.get("sampling_mode", "target_count")),
+                    requested_frame_count=int(project.sampling.get("requested_frame_count", 1)),
+                    interval_value=float(project.sampling.get("interval_value", 1.0)),
+                    interval_unit=str(project.sampling.get("interval_unit", "seconds")),
+                    profile=profile,
+                    manual_override=True,
+                )
+                estimate = estimate_sampling(probe, config)
+                project.sampling.update({
+                    "selection_config_hash": selection_config_hash(probe, config),
+                    "selected_frame_count": 0,
+                    "selected_frame_indices": [],
+                    "rejected_frame_indices": [],
+                    "analysis_status": "pending",
+                    "timeline": [],
+                    **estimate,
+                })
+                project.stages = {}
+                project.run_id = None
         project, _ = self.store.update_project(project_id, apply)
         return project
+
+    @staticmethod
+    def _probe_from_project(project: Project) -> VideoProbe:
+        sampling = project.sampling
+        try:
+            return VideoProbe(
+                total_frames=int(sampling["source_total_frames"]),
+                duration_seconds=float(sampling["duration_seconds"]),
+                fps=float(sampling["fps"]),
+                width=int(sampling["width"]),
+                height=int(sampling["height"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("video must be probed before configuring sampling") from exc
+
+    @staticmethod
+    def _sampling_config(project: Project) -> SamplingConfig:
+        sampling = project.sampling
+        return SamplingConfig(
+            mode=str(sampling.get("sampling_mode", "auto")),
+            requested_frame_count=int(sampling["requested_frame_count"]) if sampling.get("requested_frame_count") is not None else None,
+            interval_value=float(sampling.get("interval_value", 1.0)),
+            interval_unit=str(sampling.get("interval_unit", "seconds")),
+            profile=project.profile,
+            manual_override=bool(sampling.get("manual_override", False)),
+        )
+
+    def set_sampling_config(
+        self,
+        project_id: str,
+        mode: str,
+        requested_frame_count: int,
+        interval_value: float,
+        interval_unit: str,
+    ) -> Project:
+        snapshot = self.store.load(project_id)
+        if snapshot.input_kind != "video":
+            raise ValueError("frame sampling is available only for video inputs")
+        probe = self._probe_from_project(snapshot)
+        config = SamplingConfig(
+            mode=mode,
+            requested_frame_count=requested_frame_count,
+            interval_value=interval_value,
+            interval_unit=interval_unit,
+            profile=snapshot.profile,
+            manual_override=True,
+        )
+        validate_config(probe, config)
+        estimate = estimate_sampling(probe, config)
+        effective = requested_count(probe, config)
+        def apply(project: Project) -> None:
+            if project.status == "running":
+                raise RuntimeError("cannot change sampling while a pipeline is running")
+            project.sampling.update({
+                "sampling_mode": mode,
+                "requested_frame_count": effective,
+                "interval_value": interval_value,
+                "interval_unit": interval_unit,
+                "manual_override": True,
+                "profile_label": "Custom",
+                "candidate_frame_count": estimate["estimated_candidate_count"],
+                "selected_frame_count": 0,
+                "selected_frame_indices": [],
+                "rejected_frame_indices": [],
+                "selection_config_hash": selection_config_hash(probe, config),
+                "analysis_status": "pending",
+                "timeline": [],
+                "warnings": [],
+                **estimate,
+            })
+            project.stages = {}
+            project.run_id = None
+            project.status = "ready"
+        project, _ = self.store.update_project(project_id, apply)
+        return project
+
+    def analyze_sampling(self, project_id: str) -> Project:
+        project = self.store.load(project_id)
+        if project.input_kind != "video" or not project.input_path:
+            raise ValueError("import a video before analyzing keyframes")
+        probe, config = self._probe_from_project(project), self._sampling_config(project)
+        expected_hash = selection_config_hash(probe, config)
+        self.store.update_project(project_id, lambda current: current.sampling.update({"analysis_status": "analyzing", "warnings": []}))
+        try:
+            result = analyze_video(
+                project.input_path,
+                probe,
+                config,
+                self.runtime.ffmpeg,
+                Path(project.root) / "inputs" / "analysis",
+            )
+        except Exception as exc:
+            self.store.update_project(project_id, lambda current: current.sampling.update({"analysis_status": "failed", "analysis_error": str(exc)}))
+            raise
+        def apply(current: Project) -> None:
+            if current.sampling.get("selection_config_hash") != expected_hash:
+                raise RuntimeError("sampling configuration changed while analysis was running")
+            current.sampling.update(result)
+            current.sampling.pop("analysis_error", None)
+            current.warnings = [item for item in current.warnings if not item.startswith("Frame sampling:")]
+            current.warnings.extend(f"Frame sampling: {item}" for item in result.get("warnings", []))
+        analyzed, _ = self.store.update_project(project_id, apply)
+        return analyzed
 
     def recover_interrupted_projects(self) -> list[Project]:
         """Mark stale GUI-owned runs resumable after an application restart."""
@@ -271,7 +470,7 @@ class PipelineController:
 
     def _ingest(self, project: Project, token: CancellationToken, event: Callable[[str, str, dict[str, Any]], None] | None) -> Path:
         cached = self._previous(project, "ingest")
-        if cached:
+        if cached and cached.metrics.get("selection_config_hash") == project.sampling.get("selection_config_hash"):
             self._emit(event, "log", "reusing durable keyframe set", {})
             return Path(cached.artifact_paths[0])
         state = self._stage(project, "ingest", event)
@@ -288,15 +487,32 @@ class PipelineController:
                     with Image.open(image) as loaded:
                         loaded.convert("RGB").save(target)
         else:
-            fps = PROFILES[project.profile]["fps"]
-            command = [self.runtime.ffmpeg, "-y", "-i", str(source), "-vf", f"fps={fps}", str(destination / "frame_%06d.png")]
-            completed = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
-            if completed.returncode:
-                raise RuntimeError(f"ffmpeg extraction failed: {completed.stderr[-1000:]}")
+            probe, config = self._probe_from_project(project), self._sampling_config(project)
+            expected_hash = selection_config_hash(probe, config)
+            if project.sampling.get("analysis_status") != "complete" or project.sampling.get("selection_config_hash") != expected_hash:
+                self._emit(event, "sampling", "Analyzing all source frames and building the candidate pool", {})
+                analyzed = self.analyze_sampling(project.project_id)
+                project.sampling = deepcopy(analyzed.sampling)
+            selected_indices = [int(value) for value in project.sampling.get("selected_frame_indices", [])]
+            extract_selected_frames(source, selected_indices, probe.total_frames, self.runtime.ffmpeg, destination)
         frames = sorted(destination.glob("*.png"))
         if len(frames) < 3:
             raise RuntimeError("keyframe extraction produced fewer than three frames")
-        state.artifact_paths, state.metrics = [str(destination)], {"frame_count": len(frames)}
+        sampling_metrics = {
+            key: deepcopy(project.sampling.get(key))
+            for key in (
+                "source_total_frames",
+                "sampling_mode",
+                "requested_frame_count",
+                "candidate_frame_count",
+                "selected_frame_count",
+                "selected_frame_indices",
+                "rejected_frame_indices",
+                "selection_config_hash",
+            )
+            if key in project.sampling
+        }
+        state.artifact_paths, state.metrics = [str(destination)], {"frame_count": len(frames), **sampling_metrics}
         self._complete(project, "ingest", state, event)
         return destination
 
@@ -362,6 +578,7 @@ class PipelineController:
                 if len(values) >= 10:
                     image_camera[values[9]] = values[8]
         records = []
+        source_fps = float(project.sampling.get("fps", 1.0))
         for index, source in enumerate(sorted(images.glob("*.png"))):
             target = training_images / source.name
             size = camera_sizes.get(image_camera.get(source.name, ""))
@@ -370,11 +587,22 @@ class PipelineController:
                 if size and converted.size != size:
                     converted = converted.resize(size, Image.Resampling.LANCZOS)
                 converted.save(target)
-            records.append({"frame_id": f"scene:{index:06d}", "image_path": f"scenes/scene/frames/{source.name}", "sha256": self._sha256(target), "sample_index": index, "nominal_timestamp_seconds": float(index), "split": "holdout" if index % 8 == 4 else "train"})
+            try:
+                source_index = int(source.stem.rsplit("_", 1)[1])
+            except (IndexError, ValueError):
+                source_index = index
+            records.append({"frame_id": f"scene:{source_index:06d}", "image_path": f"scenes/scene/frames/{source.name}", "sha256": self._sha256(target), "sample_index": source_index, "nominal_timestamp_seconds": source_index / max(source_fps, 1e-9), "split": "holdout" if index % 8 == 4 else "train"})
         if sum(record["split"] == "holdout" for record in records) == 0:
             records[-1]["split"] = "holdout"
-        dataset = {"schema_version": "desktop-dataset/v1", "dataset_id": project.project_id, "scenes": [{"scene_id": "scene", "source": {"file_name": Path(project.input_path or "input").name, "sha256": self._sha256(Path(project.input_path)) if Path(project.input_path or "").is_file() else "0" * 64}, "frames": records}]}
+        provenance_keys = (
+            "source_total_frames", "sampling_mode", "requested_frame_count",
+            "candidate_frame_count", "selected_frame_count", "selected_frame_indices",
+            "rejected_frame_indices", "selection_config_hash",
+        )
+        sampling_provenance = {key: deepcopy(project.sampling.get(key)) for key in provenance_keys if key in project.sampling}
+        dataset = {"schema_version": "desktop-dataset/v1", "dataset_id": project.project_id, "sampling_provenance": sampling_provenance, "scenes": [{"scene_id": "scene", "source": {"file_name": Path(project.input_path or "input").name, "sha256": self._sha256(Path(project.input_path)) if Path(project.input_path or "").is_file() else "0" * 64}, "frames": records}]}
         (destination / "dataset.manifest.json").write_text(json.dumps(dataset, indent=2) + "\n", encoding="utf-8")
+        (destination / "sampling.provenance.json").write_text(json.dumps(sampling_provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return destination
 
     def _train(self, project: Project, data_dir: Path, token: CancellationToken, event: Callable[[str, str, dict[str, Any]], None] | None) -> Path:
@@ -428,6 +656,17 @@ class PipelineController:
                 if target.exists(): shutil.rmtree(target)
                 shutil.copytree(source, target)
             else: shutil.copy2(source, target)
+        exported_bundle = destination / bundle.name
+        if exported_bundle.is_dir() and project.sampling:
+            provenance_keys = (
+                "source_total_frames", "sampling_mode", "requested_frame_count",
+                "candidate_frame_count", "selected_frame_count", "selected_frame_indices",
+                "rejected_frame_indices", "selection_config_hash",
+            )
+            sampling_provenance = {key: deepcopy(project.sampling.get(key)) for key in provenance_keys if key in project.sampling}
+            (exported_bundle / "sampling.provenance.json").write_text(
+                json.dumps(sampling_provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
         if pointcloud.exists():
             shutil.copy2(pointcloud, destination / pointcloud.name)
         elif fallback_pointcloud and fallback_pointcloud.is_file():

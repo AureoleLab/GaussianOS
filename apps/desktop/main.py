@@ -31,6 +31,11 @@ def project_view(project: Project) -> dict[str, Any]:
         for path in value.get("stages", {}).get(name, {}).get("artifact_paths", [])
     ]
     value["artifacts"] = list(dict.fromkeys(artifacts))
+    ingest = value.get("stages", {}).get("ingest", {})
+    value.setdefault("sampling", {})["colmap_input_frame_count"] = (
+        int(ingest.get("metrics", {}).get("frame_count", 0))
+        if ingest.get("status") == "succeeded" else 0
+    )
     return value
 
 
@@ -149,6 +154,7 @@ def main() -> int:
             self.viewer_generation = 0
             self.persistence_failed: set[str] = set()
             self.acceptance_started = False
+            self.sampling_analysis: set[str] = set()
 
         def _project(self) -> Project | None:
             try: return store.load(self.selected) if self.selected else None
@@ -208,12 +214,16 @@ def main() -> int:
         def importInput(self, source: str) -> None:
             project = self._project()
             if project is None: return
-            try:
-                controller.import_input(project.project_id, source)
-                self.logs.append(f"Imported {source}")
-            except Exception as exc:
-                self.logs.append(f"Import failed: {exc}")
-            self._refresh()
+            project_id = project.project_id
+            self.logs.append(f"Probing input: {source}")
+            self.changed.emit()
+            def import_source() -> None:
+                try:
+                    controller.import_input(project_id, source)
+                    self.event.emit("input_ready", f"Imported and probed {source}", {"project_id": project_id})
+                except Exception as exc:
+                    self.event.emit("input_failed", str(exc), {"project_id": project_id})
+            threading.Thread(target=import_source, name=f"input-probe-{project_id[:8]}", daemon=True).start()
 
         @Slot(str)
         def setProfile(self, profile: str) -> None:
@@ -224,6 +234,34 @@ def main() -> int:
                 except Exception as exc:
                     self.logs.append(f"Profile update failed: {exc}")
             self._refresh()
+
+        @Slot(str, int, float, str)
+        def setSampling(self, mode: str, requested: int, interval_value: float, interval_unit: str) -> None:
+            project = self._project()
+            if project is None: return
+            try:
+                controller.set_sampling_config(project.project_id, mode, requested, interval_value, interval_unit)
+                self.logs.append(f"Sampling set to {mode}; configuration is Custom")
+            except Exception as exc:
+                self.logs.append(f"Sampling update failed: {exc}")
+            self._refresh()
+
+        @Slot()
+        def analyzeSampling(self) -> None:
+            project = self._project()
+            if project is None or project.input_kind != "video" or project.project_id in self.sampling_analysis:
+                return
+            project_id = project.project_id
+            self.sampling_analysis.add(project_id)
+            self.logs.append("Frame analysis queued")
+            self.changed.emit()
+            def analyze() -> None:
+                try:
+                    analyzed = controller.analyze_sampling(project_id)
+                    self.event.emit("sampling_ready", "Frame analysis completed", {"project_id": project_id, "selected": analyzed.sampling.get("selected_frame_count", 0)})
+                except Exception as exc:
+                    self.event.emit("sampling_failed", str(exc), {"project_id": project_id})
+            threading.Thread(target=analyze, name=f"sampling-{project_id[:8]}", daemon=True).start()
 
         @Slot()
         def start(self) -> None:
@@ -328,6 +366,9 @@ def main() -> int:
                 self.viewer_status = f"Viewer load failed: {message}"
                 self.viewerUrlChanged.emit()
                 self.viewerStatusChanged.emit()
+            elif kind in {"sampling_ready", "sampling_failed"} and isinstance(payload, dict):
+                project_id = payload.get("project_id")
+                if isinstance(project_id, str): self.sampling_analysis.discard(project_id)
             self._refresh()
 
     QQuickWebEngineProfile.defaultProfile().installUrlSchemeHandler(b"gaussian", viewer_handler)

@@ -89,6 +89,7 @@ class Project:
     run_id: str | None = None
     status: str = "idle"
     current_stage: str | None = None
+    sampling: dict[str, Any] = field(default_factory=dict)
     stages: dict[str, StageState] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=_now)

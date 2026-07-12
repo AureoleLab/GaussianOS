@@ -76,3 +76,11 @@ def test_succeeded_project_is_always_presented_at_one_hundred_percent():
     project.stages = {name: StageState(status="succeeded") for name in STAGES}
     project.stages["fallback"].status = "skipped"
     assert project_view(project)["progress"] == 1.0
+
+
+def test_gui_colmap_input_count_comes_from_completed_ingest_not_estimate():
+    project = Project("id", "name", ".", status="ready")
+    project.sampling = {"selected_frame_count": 60}
+    assert project_view(project)["sampling"]["colmap_input_frame_count"] == 0
+    project.stages["ingest"] = StageState(status="succeeded", metrics={"frame_count": 60})
+    assert project_view(project)["sampling"]["colmap_input_frame_count"] == 60

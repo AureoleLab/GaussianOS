@@ -21,7 +21,8 @@ ApplicationWindow {
     palette.highlight: "#3f8cff"
     palette.highlightedText: "#ffffff"
 
-    property var current: JSON.parse(backend.currentJson || "{}")
+    property var current: JSON.parse(backend ? (backend.currentJson || "{}") : "{}")
+    property var sampling: current.sampling || ({})
     property bool logsOpen: true
     readonly property color panel: "#1a1f27"
     readonly property color line: "#303845"
@@ -38,6 +39,9 @@ ApplicationWindow {
         return "#687587"
     }
     function stageState(name) { return (current.stages || {})[name] || {"status":"pending"} }
+    function samplingModeId(index) { return ["auto", "target_count", "interval", "all_frames"][index] }
+    function samplingModeIndex(mode) { return Math.max(0, ["auto", "target_count", "interval", "all_frames"].indexOf(mode || "auto")) }
+    function fileUrl(path) { return path ? "file:///" + path.replace(/\\/g, "/") : "" }
 
     Connections {
         target: backend
@@ -154,7 +158,67 @@ ApplicationWindow {
                         width: parent.width; spacing: 12
                         Label { text: "RECONSTRUCTION PROFILE"; color: muted; font.bold: true; font.pixelSize: 11; Layout.topMargin: 12; Layout.leftMargin: 12 }
                         ComboBox { id: mode; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; model: ["preview", "balanced", "quality"]; currentIndex: Math.max(0, model.indexOf(current.profile || "balanced")); enabled: current.status !== "running"; onActivated: backend.setProfile(currentText) }
-                        Label { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; wrapMode: Text.Wrap; color: muted; text: mode.currentText === "preview" ? "Fast iteration · 1,000 steps · 3 fps" : mode.currentText === "quality" ? "Maximum quality · 7,000 steps · 15 fps" : "Recommended balance · 3,000 steps · 8 fps" }
+                        Label { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; wrapMode: Text.Wrap; color: muted; text: (mode.currentText === "preview" ? "Fast iteration · 1,000 steps" : mode.currentText === "quality" ? "Maximum quality · 7,000 steps" : "Recommended balance · 3,000 steps") + (sampling.profile_label === "Custom" ? " · Custom frames" : " · Auto frames") }
+                        Rectangle { Layout.fillWidth: true; height: 1; color: line; visible: current.input_kind === "video" }
+                        Label { text: "FRAME SAMPLING"; color: muted; font.bold: true; font.pixelSize: 11; Layout.leftMargin: 12; visible: current.input_kind === "video" }
+                        ComboBox {
+                            id: samplingMode; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12
+                            model: ["Auto", "Target Count", "Interval", "All Frames"]
+                            currentIndex: samplingModeIndex(sampling.sampling_mode)
+                            enabled: current.status !== "running"; visible: current.input_kind === "video"
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video" && samplingMode.currentIndex === 1
+                            Label { text: "Final frames"; color: muted; Layout.fillWidth: true }
+                            SpinBox { id: targetFrames; from: 1; to: Math.max(1, sampling.source_total_frames || 1); value: Math.min(to, sampling.requested_frame_count || 1); editable: true }
+                            Label { text: "/ " + (sampling.source_total_frames || 0); color: muted }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video" && samplingMode.currentIndex === 2
+                            Label { text: "Every"; color: muted }
+                            SpinBox { id: intervalValue; from: 1; to: 600; value: Math.max(1, Math.round(sampling.interval_value || 1)); editable: true; Layout.preferredWidth: 90 }
+                            ComboBox { id: intervalUnit; model: ["frames", "seconds"]; currentIndex: Math.max(0, model.indexOf(sampling.interval_unit || "seconds")); Layout.fillWidth: true }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video"
+                            Button {
+                                text: "Apply"; enabled: current.status !== "running"
+                                onClicked: backend.setSampling(samplingModeId(samplingMode.currentIndex), targetFrames.value, intervalValue.value, intervalUnit.currentText)
+                            }
+                            Button {
+                                text: sampling.analysis_status === "analyzing" ? "Analyzing…" : "Reanalyze"; Layout.fillWidth: true
+                                enabled: current.status !== "running" && sampling.analysis_status !== "analyzing"
+                                onClicked: {
+                                    backend.setSampling(samplingModeId(samplingMode.currentIndex), targetFrames.value, intervalValue.value, intervalUnit.currentText)
+                                    backend.analyzeSampling()
+                                }
+                            }
+                        }
+                        GridLayout {
+                            columns: 2; columnSpacing: 10; rowSpacing: 5; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video"
+                            Label { text: "Source"; color: muted } Label { text: (sampling.source_total_frames || 0) + " frames"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "Duration / FPS"; color: muted } Label { text: Number(sampling.duration_seconds || 0).toFixed(2) + " s · " + Number(sampling.fps || 0).toFixed(2); Layout.alignment: Qt.AlignRight }
+                            Label { text: "Resolution"; color: muted } Label { text: (sampling.width || 0) + " × " + (sampling.height || 0); Layout.alignment: Qt.AlignRight }
+                            Label { text: "Candidates"; color: muted } Label { text: sampling.candidate_frame_count || sampling.estimated_candidate_count || "—"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "Requested / selected"; color: muted } Label { text: (sampling.requested_frame_count || 0) + " / " + (sampling.selected_frame_count || 0); color: sampling.selected_frame_count && sampling.selected_frame_count < sampling.requested_frame_count ? "#e5ad55" : "#dce3ec"; Layout.alignment: Qt.AlignRight }
+                            Label { text: sampling.colmap_input_frame_count ? "Sent to COLMAP" : "Ready for COLMAP"; color: muted } Label { text: sampling.colmap_input_frame_count || sampling.selected_frame_count || 0; color: accent; font.bold: true; Layout.alignment: Qt.AlignRight }
+                        }
+                        Label { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; wrapMode: Text.Wrap; color: sampling.warnings && sampling.warnings.length ? "#e5ad55" : muted; visible: current.input_kind === "video"; text: sampling.warnings && sampling.warnings.length ? sampling.warnings.join("\n") : (sampling.advisory || "Import a video to estimate frame cost.") }
+                        Label { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; color: muted; visible: current.input_kind === "video"; text: "Estimate: " + (sampling.estimated_minutes || "—") + " min · " + (sampling.estimated_vram_gib || "—") + " GiB VRAM" }
+                        Label { text: "KEYFRAME TIMELINE"; color: muted; font.bold: true; font.pixelSize: 10; Layout.leftMargin: 12; visible: current.input_kind === "video" }
+                        ListView {
+                            id: timeline; Layout.fillWidth: true; Layout.preferredHeight: 78; Layout.leftMargin: 12; Layout.rightMargin: 12
+                            orientation: ListView.Horizontal; spacing: 5; clip: true; model: sampling.timeline || []; visible: current.input_kind === "video"
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: 72; height: 72; radius: 3; color: "#11151b"
+                                border.width: 2; border.color: modelData.status === "selected" ? "#54c88a" : "#596474"
+                                Image { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 48; source: fileUrl(modelData.thumbnail_path); fillMode: Image.PreserveAspectCrop; asynchronous: true }
+                                Label { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 21; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 9; color: modelData.status === "selected" ? "#54c88a" : muted; text: (modelData.status === "selected" ? "Selected " : "Rejected ") + Number(modelData.timestamp_seconds).toFixed(1) + "s" }
+                                ToolTip.visible: timelineMouse.containsMouse; ToolTip.text: modelData.reason || modelData.status
+                                MouseArea { id: timelineMouse; anchors.fill: parent; hoverEnabled: true }
+                            }
+                        }
                         Rectangle { Layout.fillWidth: true; height: 1; color: line }
                         Label { text: "QUALITY & STATUS"; color: muted; font.bold: true; font.pixelSize: 11; Layout.leftMargin: 12 }
                         GridLayout {
