@@ -79,7 +79,8 @@ class TrainConfig(BaseModel):
     seed: int = Field(default=42, ge=0)
     sh_degree: int = Field(default=3, ge=0, le=3)
     sh_degree_interval: int = Field(default=500, ge=1)
-    minimum_psnr_gain_db: float = Field(default=0.25, ge=0.0)
+    minimum_psnr_gain_db: float = Field(default=0.25, ge=-20.0)
+    reconstruction_plugin_id: Literal["recon.colmap", "recon.mapanything"] = "recon.colmap"
 
 
 class _P1Parser:
@@ -93,18 +94,24 @@ class _P1Parser:
             line.split() for line in (model / "cameras.txt").read_text(encoding="utf-8").splitlines()
             if line.strip() and not line.startswith("#")
         ]
-        if len(camera_lines) != 1 or camera_lines[0][1] not in {"SIMPLE_PINHOLE", "SIMPLE_RADIAL", "PINHOLE"}:
-            raise ValueError("P1 gsplat validation expects one pinhole/SIMPLE_RADIAL camera")
-        fields = camera_lines[0]
-        camera_id, camera_model = int(fields[0]), fields[1]
-        width, height = int(fields[2]) // factor, int(fields[3]) // factor
-        values = [float(value) for value in fields[4:]]
-        if camera_model in {"SIMPLE_PINHOLE", "SIMPLE_RADIAL"}:
-            fx = fy = values[0] / factor
-            cx, cy = values[1] / factor, values[2] / factor
-        else:
-            fx, fy, cx, cy = (value / factor for value in values[:4])
-        k = np.asarray([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
+        if not camera_lines:
+            raise ValueError("COLMAP model contains no cameras")
+        camera_data: dict[int, tuple[np.ndarray, tuple[int, int]]] = {}
+        for fields in camera_lines:
+            camera_id, camera_model = int(fields[0]), fields[1]
+            if camera_model not in {"SIMPLE_PINHOLE", "SIMPLE_RADIAL", "PINHOLE"}:
+                raise ValueError(f"unsupported COLMAP camera model for gsplat: {camera_model}")
+            width, height = int(fields[2]) // factor, int(fields[3]) // factor
+            values = [float(value) for value in fields[4:]]
+            if camera_model in {"SIMPLE_PINHOLE", "SIMPLE_RADIAL"}:
+                fx = fy = values[0] / factor
+                cx, cy = values[1] / factor, values[2] / factor
+            else:
+                fx, fy, cx, cy = (value / factor for value in values[:4])
+            camera_data[camera_id] = (
+                np.asarray([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64),
+                (width, height),
+            )
         poses = read_images_txt(model / "images.txt")
         self.image_names = [pose.image_name for pose in poses]
         image_root = root / (f"images_{factor}" if factor > 1 else "images")
@@ -112,10 +119,14 @@ class _P1Parser:
         if not all(Path(path).is_file() for path in self.image_paths):
             raise FileNotFoundError("one or more frozen gsplat input images are missing")
         self.camtoworlds = np.stack([pose.cam2world for pose in poses]).astype(np.float64)
-        self.camera_ids = [camera_id] * len(poses)
+        self.camera_ids = [pose.camera_id for pose in poses]
         self.undistort_map = None
         self.undistort_roi = None
-        if camera_model == "SIMPLE_RADIAL" and len(values) > 3 and values[3] != 0.0:
+        # P1's single-camera COLMAP path may contain SIMPLE_RADIAL distortion.
+        # MapAnything+BA may legitimately produce one PINHOLE per frame, so it
+        # bypasses this legacy shared-camera correction.
+        if len(camera_data) == 1 and camera_model == "SIMPLE_RADIAL" and len(values) > 3 and values[3] != 0.0:
+            k = camera_data[camera_id][0]
             distortion = np.asarray([values[3], 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
             new_k, roi = cv2.getOptimalNewCameraMatrix(k, distortion, (width, height), 0)
             map_x, map_y = cv2.initUndistortRectifyMap(
@@ -124,14 +135,14 @@ class _P1Parser:
             x, y, roi_width, roi_height = (int(value) for value in roi)
             new_k[0, 2] -= x
             new_k[1, 2] -= y
-            k = new_k
+            camera_data[camera_id] = (new_k, (width, height))
             self.undistort_map = (map_x, map_y)
             self.undistort_roi = (x, y, roi_width, roi_height)
             width, height = roi_width, roi_height
-        self.Ks_dict = {camera_id: k}
-        self.params_dict = {camera_id: np.empty(0, dtype=np.float32)}
-        self.imsize_dict = {camera_id: (width, height)}
-        self.mask_dict = {camera_id: None}
+        self.Ks_dict = {camera_id: item[0] for camera_id, item in camera_data.items()}
+        self.params_dict = {camera_id: np.empty(0, dtype=np.float32) for camera_id in camera_data}
+        self.imsize_dict = {camera_id: item[1] for camera_id, item in camera_data.items()}
+        self.mask_dict = {camera_id: None for camera_id in camera_data}
         positions: list[list[float]] = []
         colors: list[list[int]] = []
         with (model / "points3D.txt").open("r", encoding="utf-8") as stream:
@@ -388,7 +399,18 @@ def _scene_bundle(config: TrainConfig, parser, params, scene: dict, output: Path
         spherical_harmonics=SphericalHarmonicsSpec(degree=config.sh_degree),
         color_space="linear_srgb",
         input_files=(InputFileHash(logical_path=f"inputs/{scene['source']['file_name']}", sha256=scene["source"]["sha256"]),),
-        reconstruction_plugin=PluginProvenance(plugin_id="recon.colmap", plugin_version="3.13.0", upstream_commit=COLMAP_COMMIT, config_sha256=model_hash, weight_sha256=(), code_license="BSD-3-Clause", checkpoint_license="NO_CHECKPOINT"),
+        reconstruction_plugin=PluginProvenance(
+            plugin_id=config.reconstruction_plugin_id,
+            plugin_version="v1.1.2" if config.reconstruction_plugin_id == "recon.mapanything" else "3.13.0",
+            upstream_commit="c845b8f4f6cde0c20aecd87573656c3f69f5b2b0" if config.reconstruction_plugin_id == "recon.mapanything" else COLMAP_COMMIT,
+            config_sha256=model_hash,
+            weight_sha256=(),
+            code_license="Apache-2.0" if config.reconstruction_plugin_id == "recon.mapanything" else "BSD-3-Clause",
+            # The fallback's checkpoint is captured by its reconstruction
+            # artifact provenance; the training SceneBundle contains no copied
+            # reconstruction weights and therefore has an empty weight list.
+            checkpoint_license="NO_CHECKPOINT",
+        ),
         trainer_plugin=PluginProvenance(plugin_id="train.gsplat", plugin_version="v1.5.3", upstream_commit=GSPLAT_COMMIT, config_sha256=config_hash, weight_sha256=(), code_license="Apache-2.0", checkpoint_license="NO_CHECKPOINT"),
     )
     bundle_path = output / f"{config.scene_id}.scene-bundle"

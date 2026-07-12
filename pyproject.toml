@@ -25,9 +25,14 @@ compatibility = [
   "gsply==0.4.6",
   "plyfile==1.1.3",
 ]
+desktop = [
+  "PySide6==6.10.2",
+  "gsply==0.4.6",
+]
 
 [project.scripts]
 gaussian-factory = "apps.cli.main:main"
+gaussian-factory-gui = "apps.desktop.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
