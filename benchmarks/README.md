@@ -35,6 +35,14 @@ used by existing result rows.
   probe itself does not launch reconstruction or training.
 - `evidence/ply_consumer_compatibility.json`: actual four-consumer test result
   for the generated Graphdeco PLY fixture, plus the explicit Brush gap.
+- `evidence/gsplat_training.json`: native build identity and three formal
+  7000-step training results.
+- `evidence/trained_ply_consumers.json`: actual trained-scene PLY loading in
+  ExportKit, gsply, SplatTransform, and Brush.
+- `evidence/mapanything_fallback.json`: hard-case trigger, Apache inference,
+  COLMAP export/BA, canonical camera validation, and normal-scene no-trigger.
+- `references/`: explicit Postshot and legacy import contract; currently
+  `WAITING_FOR_REFERENCE`.
 - `benchmark_matrix.csv`: required candidate/profile combinations and current
   truthful state.
 - `report_template.md`: metric schema for one completed run.

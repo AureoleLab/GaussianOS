@@ -1,0 +1,7 @@
+{
+  "schema_version": "p1-reference-status/v1",
+  "checked_at": "2026-07-12",
+  "postshot": "WAITING_FOR_REFERENCE",
+  "legacy_colmap_brush": "WAITING_FOR_REFERENCE",
+  "candidate_substituted_for_reference": false
+}
