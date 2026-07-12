@@ -93,7 +93,7 @@
       },
       "weights": [],
       "allowed_in_production": true,
-      "local_runtime_status": "not_installed"
+      "local_runtime_status": "installed_native_sm120_forward_backward_and_three_scene_7000_step_training_passed"
     },
     {
       "id": "faster_gs",
@@ -138,7 +138,7 @@
       },
       "weights": [],
       "allowed_in_production": true,
-      "local_runtime_status": "installed_hash_verified_and_graphdeco_ply_loaded_with_negative_control"
+      "local_runtime_status": "installed_hash_verified_fixture_negative_control_and_three_trained_plys_loaded"
     },
     {
       "id": "splat_transform",
@@ -156,7 +156,7 @@
       },
       "weights": [],
       "allowed_in_production": true,
-      "local_runtime_status": "not_installed_node_and_npm_available"
+      "local_runtime_status": "executed_via_pinned_npx_three_trained_plys_loaded"
     }
   ],
   "supporting_locks": [

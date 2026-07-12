@@ -11,10 +11,14 @@
     "cuda_runtime": "13.0",
     "required_compiled_arch": "sm_120",
     "cuda_tensor_smoke": "passed",
-    "native_extension_build_requirements": [
-      "CUDA 13 nvcc",
-      "MSVC cl.exe"
-    ]
+    "native_extension_build": "passed",
+    "cuda_toolkit": "13.0.48",
+    "msvc": "19.44.35228",
+    "cmake": "3.31.6-msvc6",
+    "ninja": "1.12.1",
+    "cuda_home": "I:/GaussianOS/.gaussian-factory/toolchains/cuda-13.0.48/Library",
+    "torch_cuda_arch_list": "12.0",
+    "native_extension_sha256": "846115e6db8b4862d4f050b4bc9eec45b111de8946529352bb5af5272c0e53bf"
   },
   "host_global_torch_is_training_approved": false
 }

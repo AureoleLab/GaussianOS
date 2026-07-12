@@ -1,0 +1,68 @@
+{
+  "schema_version": "gsplat-runtime-lock/v1",
+  "platform": "windows-x86_64",
+  "gpu_arch": "sm_120",
+  "source": {
+    "version": "v1.5.3",
+    "commit": "937e29912570c372bed6747a5c9bf85fed877bae",
+    "license": "Apache-2.0",
+    "glm_submodule_commit": "33b4a621a697a305bc3a7610d290677b96beb181"
+  },
+  "build_toolchain": {
+    "cuda_nvcc": {
+      "version": "13.0.48",
+      "conda_package": "cuda-nvcc-13.0.48-h338e010_0",
+      "conda_package_sha256": "b22a72106ab941b5d392078a3c61363bfe6347e05e4e393196b19b1f82d81939",
+      "nvcc_exe_sha256": "e245000ecf294dc8c46d9be58fa295d4bcf7b3b9096dde8c18899255a5772ac5",
+      "license": "NVIDIA CUDA Toolkit EULA"
+    },
+    "msvc": {
+      "product": "Visual Studio Build Tools 2022",
+      "product_version": "17.14.35",
+      "compiler_version": "19.44.35228",
+      "cl_exe_sha256": "88c8344236a27a6e727e0a8edc49aaa2690bdc7a9464b9d18cc7abe70a9f1c0d",
+      "license": "Microsoft Visual Studio license"
+    },
+    "cmake": "3.31.6-msvc6",
+    "ninja": "1.12.1",
+    "cuda_home": "I:/GaussianOS/.gaussian-factory/toolchains/cuda-13.0.48/Library",
+    "torch_cuda_arch_list": "12.0"
+  },
+  "runtime": {
+    "python": "3.10.20",
+    "torch": "2.9.1+cu130",
+    "torch_license": "BSD-3-Clause",
+    "torchvision": "0.24.1+cu130",
+    "torchvision_license": "BSD-3-Clause",
+    "numpy": "1.26.4",
+    "scipy": "1.15.3",
+    "opencv_python_headless": "4.11.0.86",
+    "opencv_license": "Apache-2.0",
+    "lpips": "0.1.4",
+    "lpips_license": "BSD-2-Clause",
+    "pydantic": "2.12.5",
+    "safetensors": "0.6.2"
+  },
+  "metric_weights": [
+    {
+      "id": "torchvision-alexnet-owt-7be5be79",
+      "sha256": "7be5be791159472b1fbf3c69796f7cb30dca7ad8466c2df70058c37116cdee02",
+      "size_bytes": 244408911,
+      "license": "BSD-3-Clause",
+      "scope": "LPIPS evaluation only"
+    },
+    {
+      "id": "lpips-v0.1-alex-linear",
+      "sha256": "df73285e35b22355a2df87cdb6b70b343713b667eddbda73e1977e0c860835c0",
+      "size_bytes": 6009,
+      "license": "BSD-2-Clause",
+      "scope": "LPIPS evaluation only"
+    }
+  ],
+  "build_result": {
+    "native_extension": "gsplat/csrc.pyd",
+    "native_extension_sha256": "846115e6db8b4862d4f050b4bc9eec45b111de8946529352bb5af5272c0e53bf",
+    "build_log_sha256": "98b3396bddacb1e403920062dee3eb765b34a08123722526585a077535f4140d",
+    "forward_backward": "PASS"
+  }
+}
