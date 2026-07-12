@@ -32,6 +32,7 @@ from .project_store import Project, ProjectStore, ProjectStoreError, StageState
 
 ROOT = Path(__file__).resolve().parents[2]
 STAGES = ("ingest", "colmap", "fallback", "train", "validate", "export")
+TERMINAL_STAGE_STATES = frozenset({"succeeded", "skipped", "fallback_required"})
 PROFILES = {
     "preview": {"fps": 3.0, "steps": 1000},
     "balanced": {"fps": 8.0, "steps": 3000},
@@ -125,6 +126,10 @@ class PipelineController:
             def apply(project: Project) -> None:
                 if project.status == "running":
                     project.status = "interrupted"
+                    for state in project.stages.values():
+                        if state.status == "running":
+                            state.status = "interrupted"
+                            state.error = "Desktop restarted while this stage was running"
                     project.current_stage = None
                     project.warnings.append("Desktop restarted while this task was running; resume to continue.")
             project, _ = self.store.update_project(snapshot.project_id, apply)
@@ -157,13 +162,16 @@ class PipelineController:
             training_input = self._prepare_training_input(project, reconstruction, inputs)
             training = self._train(project, training_input, token, on_event)
             self._validate_and_export(project, training, on_event)
+            self._normalize_success(project)
             project.status = "succeeded"
         except InterruptedError:
-            project.status = "cancelled"
+            self._terminate_active_stage(project, "interrupted", token.reason)
+            project.status = "interrupted"
         except ProjectStoreError as exc:
             persistence_failed = True
             self._mark_persistence_failure(project, exc, on_event)
         except Exception as exc:
+            self._terminate_active_stage(project, "failed", str(exc))
             project.status = "failed"
             project.warnings.append(f"{type(exc).__name__}: {exc}")
             self._emit(on_event, "error", str(exc), {})
@@ -197,6 +205,7 @@ class PipelineController:
             pass
 
     def _mark_persistence_failure(self, project: Project, exc: Exception, event: Callable[[str, str, dict[str, Any]], None] | None) -> None:
+        self._terminate_active_stage(project, "failed", f"Project state persistence failed: {exc}")
         project.status = "failed"
         project.current_stage = None
         project.warnings.append(f"Project state persistence failed: {exc}")
@@ -218,6 +227,33 @@ class PipelineController:
         state.status, state.updated_at = "succeeded", datetime.now(timezone.utc).isoformat()
         self._persist(project)
         self._emit(event, "progress", f"{name} completed", {"stage": name, "progress": (STAGES.index(name) + 1) / len(STAGES)})
+
+    def _skip(self, project: Project, name: str, reason: str, event: Callable[[str, str, dict[str, Any]], None] | None) -> None:
+        state = project.stages.setdefault(name, StageState())
+        state.status, state.error = "skipped", None
+        state.metrics = {"reason": reason}
+        state.updated_at = datetime.now(timezone.utc).isoformat()
+        self._persist(project)
+        self._emit(event, "stage_skipped", f"{name} skipped: {reason}", {"stage": name})
+
+    @staticmethod
+    def _terminate_active_stage(project: Project, status: str, error: str) -> None:
+        if project.current_stage:
+            state = project.stages.get(project.current_stage)
+            if state is not None and state.status == "running":
+                state.status, state.error = status, error
+                state.updated_at = datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _normalize_success(project: Project) -> None:
+        """Enforce the persisted success invariant before exposing completion."""
+        non_terminal = {
+            name: project.stages.get(name, StageState()).status
+            for name in STAGES
+            if project.stages.get(name, StageState()).status not in TERMINAL_STAGE_STATES
+        }
+        if non_terminal:
+            raise RuntimeError(f"cannot succeed with non-terminal stages: {non_terminal}")
 
     def _previous(self, project: Project, name: str) -> StageState | None:
         state = project.stages.get(name)
@@ -274,6 +310,8 @@ class PipelineController:
         for stage in ("colmap", "fallback"):
             cached = self._previous(project, stage)
             if cached:
+                if stage == "colmap" and project.stages.get("fallback", StageState()).status != "skipped":
+                    self._skip(project, "fallback", "COLMAP passed the production quality gate", event)
                 return Path(cached.artifact_paths[0])
         count = len(list(images.glob("*.png")))
         state = self._stage(project, "colmap", event)
@@ -283,6 +321,7 @@ class PipelineController:
         if outcome.result.status is StageStatus.SUCCEEDED:
             state.artifact_paths, state.metrics = [str(item.path) for item in outcome.committed_artifacts], outcome.result.quality_report.metrics if outcome.result.quality_report else {}
             self._complete(project, "colmap", state, event)
+            self._skip(project, "fallback", "COLMAP passed the production quality gate", event)
             return Path(state.artifact_paths[0])
         if token.is_cancelled:
             raise InterruptedError(token.reason)
@@ -379,7 +418,10 @@ class PipelineController:
         reconstruction_paths = project.stages.get("fallback", StageState()).artifact_paths or project.stages.get("colmap", StageState()).artifact_paths
         reconstruction = Path(reconstruction_paths[0]) if reconstruction_paths else None
         pointcloud = training / "scene.pointcloud.ply"
-        fallback_pointcloud = reconstruction / "sparse" / "points.ply" if reconstruction else None
+        fallback_pointcloud = None
+        if reconstruction:
+            candidates = (reconstruction / "scene.pointcloud.ply", reconstruction / "sparse" / "points.ply")
+            fallback_pointcloud = next((item for item in candidates if item.is_file()), None)
         for source in (ply, bundle):
             target = destination / source.name
             if source.is_dir():

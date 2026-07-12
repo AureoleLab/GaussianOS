@@ -17,3 +17,4 @@ benchmark_runs/
 
 # Keep local source media out of Git.
 testvid/
+tests/USER_TEST/
