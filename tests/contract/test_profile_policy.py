@@ -37,11 +37,45 @@ def manifest_from_payload(**overrides: object) -> PluginManifest:
                 "sha256": "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201",
                 "license": "Apache-2.0",
                 "source_url": "https://example.invalid/model.safetensors",
+            },
+            {
+                "asset_id": "dinov2-vitg14",
+                "sha256": "baf8467e50af277596bbbafa06887c177ee899ab46033649c383577d7e9309d3",
+                "license": "Apache-2.0",
+                "source_url": "https://example.invalid/dinov2_vitg14_pretrain.pth",
             }
         ],
         "dependency_locks": [
             {
                 "dependency_id": "colmap-ba",
+                "version": "3.13.0",
+                "upstream_repository": "https://github.com/colmap/colmap",
+                "upstream_commit": "0b31f98133b470eae62811b557dc2bcff1e4f9a5",
+                "code_license": "BSD-3-Clause",
+            },
+            {
+                "dependency_id": "dinov2",
+                "version": "commit-2026-07-12",
+                "upstream_repository": "https://github.com/facebookresearch/dinov2",
+                "upstream_commit": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+                "code_license": "Apache-2.0",
+            },
+            {
+                "dependency_id": "uniception",
+                "version": "v0.1.7",
+                "upstream_repository": "https://github.com/castacks/UniCeption",
+                "upstream_commit": "802ebc1783d71bbaa9d139c88d87d062ad18ce62",
+                "code_license": "BSD-3-Clause",
+            },
+            {
+                "dependency_id": "open3d",
+                "version": "v0.19.0",
+                "upstream_repository": "https://github.com/isl-org/Open3D",
+                "upstream_commit": "1e7b17438687a0b0c1e5a7187321ac7044afe275",
+                "code_license": "MIT",
+            },
+            {
+                "dependency_id": "pycolmap",
                 "version": "3.13.0",
                 "upstream_repository": "https://github.com/colmap/colmap",
                 "upstream_commit": "0b31f98133b470eae62811b557dc2bcff1e4f9a5",

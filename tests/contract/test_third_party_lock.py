@@ -48,11 +48,12 @@ def test_production_checkpoint_hashes_and_licenses_are_complete() -> None:
             assert weight["size_bytes"] > 0
             assert weight["license"]
     mapanything_weight = production["mapanything_apache"]["weights"]
-    assert len(mapanything_weight) == 1
-    assert (
-        mapanything_weight[0]["sha256"]
-        == "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201"
-    )
+    assert len(mapanything_weight) == 2
+    hashes = {weight["path"]: weight["sha256"] for weight in mapanything_weight}
+    assert hashes == {
+        "model.safetensors": "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201",
+        "dinov2_vitg14_pretrain.pth": "baf8467e50af277596bbbafa06887c177ee899ab46033649c383577d7e9309d3",
+    }
 
 
 def test_research_candidates_are_never_production_eligible() -> None:
