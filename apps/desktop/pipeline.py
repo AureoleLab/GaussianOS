@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,7 @@ from packages.licensing import ProfilePolicyRegistry
 from packages.pipeline import CancellationToken, SubprocessWorkerRunner
 from packages.plugin_sdk import ExecutionProfile, PluginManifest, StageKind, StageRequest, StageStatus
 
-from .project_store import Project, ProjectStore, StageState
+from .project_store import Project, ProjectStore, ProjectStoreError, StageState
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -78,9 +79,14 @@ class PipelineController:
         self.runtime = runtime or RuntimePaths.discover()
         self.policy = ProfilePolicyRegistry.from_directory(ROOT / "configs" / "profiles")
         self._tokens: dict[str, CancellationToken] = {}
+        self._running: set[str] = set()
         self._lock = threading.Lock()
 
-    def import_input(self, project: Project, source: str | Path) -> Project:
+    def create_project(self, name: str, project_root: str | Path) -> Project:
+        """Control-plane-only project creation entry point for the GUI."""
+        return self.store.create(name, project_root)
+
+    def import_input(self, project_id: str, source: str | Path) -> Project:
         source = Path(source).resolve()
         if not source.exists():
             raise FileNotFoundError(source)
@@ -93,9 +99,37 @@ class PipelineController:
             kind = "video"
         else:
             raise ValueError("input must be a video or image folder")
-        project.input_path, project.input_kind, project.status = str(source), kind, "ready"
-        self.store.save(project)
+        def apply(project: Project) -> None:
+            if project.status == "running":
+                raise RuntimeError("cannot change input while a pipeline is running")
+            project.input_path, project.input_kind, project.status = str(source), kind, "ready"
+        project, _ = self.store.update_project(project_id, apply)
         return project
+
+    def set_profile(self, project_id: str, profile: str) -> Project:
+        if profile not in PROFILES:
+            raise ValueError(f"unknown profile: {profile}")
+        def apply(project: Project) -> None:
+            if project.status == "running":
+                raise RuntimeError("cannot change profile while a pipeline is running")
+            project.profile = profile
+        project, _ = self.store.update_project(project_id, apply)
+        return project
+
+    def recover_interrupted_projects(self) -> list[Project]:
+        """Mark stale GUI-owned runs resumable after an application restart."""
+        recovered: list[Project] = []
+        for snapshot in self.store.all():
+            if snapshot.status != "running":
+                continue
+            def apply(project: Project) -> None:
+                if project.status == "running":
+                    project.status = "interrupted"
+                    project.current_stage = None
+                    project.warnings.append("Desktop restarted while this task was running; resume to continue.")
+            project, _ = self.store.update_project(snapshot.project_id, apply)
+            recovered.append(project)
+        return recovered
 
     def cancel(self, project_id: str) -> None:
         with self._lock:
@@ -109,11 +143,15 @@ class PipelineController:
             raise ValueError("import a video or image folder first")
         token = CancellationToken()
         with self._lock:
+            if project_id in self._running:
+                raise RuntimeError("pipeline is already running for this project")
+            self._running.add(project_id)
             self._tokens[project_id] = token
-        project.run_id = project.run_id or f"p2-{project.project_id[:12]}"
-        project.status = "running"
-        self.store.save(project)
+        persistence_failed = False
         try:
+            project.run_id = project.run_id or f"p2-{project.project_id[:12]}"
+            project.status = "running"
+            self._persist(project)
             inputs = self._ingest(project, token, on_event)
             reconstruction = self._reconstruct(project, inputs, token, on_event)
             training_input = self._prepare_training_input(project, reconstruction, inputs)
@@ -122,16 +160,48 @@ class PipelineController:
             project.status = "succeeded"
         except InterruptedError:
             project.status = "cancelled"
+        except ProjectStoreError as exc:
+            persistence_failed = True
+            self._mark_persistence_failure(project, exc, on_event)
         except Exception as exc:
             project.status = "failed"
             project.warnings.append(f"{type(exc).__name__}: {exc}")
             self._emit(on_event, "error", str(exc), {})
         finally:
-            project.current_stage = None
-            self.store.save(project)
+            if not persistence_failed:
+                project.current_stage = None
+                try:
+                    self._persist(project)
+                except ProjectStoreError as exc:
+                    persistence_failed = True
+                    self._mark_persistence_failure(project, exc, on_event)
             with self._lock:
                 self._tokens.pop(project_id, None)
+                self._running.discard(project_id)
         return project
+
+    def _persist(self, project: Project) -> None:
+        """Commit the control-plane snapshot through the atomic update API."""
+        snapshot = deepcopy(project)
+        def replace(current: Project) -> None:
+            for name in Project.__dataclass_fields__:
+                setattr(current, name, deepcopy(getattr(snapshot, name)))
+        self.store.update_project(project.project_id, replace)
+
+    def _best_effort_persist(self, project: Project) -> None:
+        try:
+            self._persist(project)
+        except ProjectStoreError:
+            # The original exception is emitted to the GUI; never mask it with
+            # a second persistence failure or let the worker thread escape.
+            pass
+
+    def _mark_persistence_failure(self, project: Project, exc: Exception, event: Callable[[str, str, dict[str, Any]], None] | None) -> None:
+        project.status = "failed"
+        project.current_stage = None
+        project.warnings.append(f"Project state persistence failed: {exc}")
+        self._best_effort_persist(project)
+        self._emit(event, "persistence_failed", str(exc), {"status": "failed", "project_id": project.project_id})
 
     def _emit(self, sink: Callable[[str, str, dict[str, Any]], None] | None, kind: str, message: str, payload: dict[str, Any]) -> None:
         if sink:
@@ -140,13 +210,13 @@ class PipelineController:
     def _stage(self, project: Project, name: str, event: Callable[[str, str, dict[str, Any]], None] | None) -> StageState:
         state = project.stages.setdefault(name, StageState())
         project.current_stage, state.status, state.error = name, "running", None
-        self.store.save(project)
+        self._persist(project)
         self._emit(event, "stage", name, {"stage": name})
         return state
 
     def _complete(self, project: Project, name: str, state: StageState, event: Callable[[str, str, dict[str, Any]], None] | None) -> None:
         state.status, state.updated_at = "succeeded", datetime.now(timezone.utc).isoformat()
-        self.store.save(project)
+        self._persist(project)
         self._emit(event, "progress", f"{name} completed", {"stage": name, "progress": (STAGES.index(name) + 1) / len(STAGES)})
 
     def _previous(self, project: Project, name: str) -> StageState | None:
@@ -217,7 +287,7 @@ class PipelineController:
         if token.is_cancelled:
             raise InterruptedError(token.reason)
         state.status, state.error = "fallback_required", outcome.result.error.message if outcome.result.error else "COLMAP failed"
-        self.store.save(project)
+        self._persist(project)
         self._emit(event, "warning", "COLMAP failed its quality gate; starting MapAnything + COLMAP BA", {})
         return self._fallback(project, images, count, token, event)
 
@@ -326,4 +396,4 @@ class PipelineController:
         source_name = Path(project.input_path or "").stem
         if source_name == "002" and not any("Scene 002" in warning for warning in project.warnings):
             project.warnings.append("Scene 002 diagnostic: skyline/building tearing is known; no concealment post-processing was applied.")
-            self.store.save(project)
+            self._persist(project)

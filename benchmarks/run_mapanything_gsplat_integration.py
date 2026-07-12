@@ -32,7 +32,7 @@ def main() -> int:
         projects.save(project)
     controller = PipelineController(projects, ROOT / ".gaussian-factory" / "artifact-store")
     if not project.input_path:
-        controller.import_input(project, ROOT / "benchmark_runs" / "mapanything-fallback" / "hard-case-001" / "images")
+        controller.import_input(project.project_id, ROOT / "benchmark_runs" / "mapanything-fallback" / "hard-case-001" / "images")
     events: list[dict[str, object]] = []
     result = controller.run(project.project_id, lambda kind, message, payload: events.append({"kind": kind, "message": message, **payload}))
     payload = result.to_dict() | {"events": events}
