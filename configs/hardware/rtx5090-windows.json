@@ -1,0 +1,20 @@
+{
+  "schema_version": "hardware-profile/v1",
+  "profile_id": "rtx5090-windows-cuda13",
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "compute_capability": "12.0",
+  "memory_mib": 32607,
+  "driver": "591.44",
+  "training_worker": {
+    "python": "3.10.20",
+    "torch": "2.9.1+cu130",
+    "cuda_runtime": "13.0",
+    "required_compiled_arch": "sm_120",
+    "cuda_tensor_smoke": "passed",
+    "native_extension_build_requirements": [
+      "CUDA 13 nvcc",
+      "MSVC cl.exe"
+    ]
+  },
+  "host_global_torch_is_training_approved": false
+}

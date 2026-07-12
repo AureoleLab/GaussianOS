@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gaussian-factory"
+version = "0.1.0"
+description = "P1 contracts, interchange formats, and validation harness for a local Gaussian Splatting factory"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+dependencies = [
+  "numpy==2.3.3",
+  "Pillow==12.3.0",
+  "pydantic==2.12.5",
+  "safetensors==0.6.2",
+]
+
+[project.optional-dependencies]
+test = [
+  "jsonschema==4.25.1",
+  "pytest==9.0.2",
+]
+compatibility = [
+  "gsply==0.4.6",
+  "plyfile==1.1.3",
+]
+
+[project.scripts]
+gaussian-factory = "apps.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["apps*", "benchmarks*", "packages*", "workers*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]

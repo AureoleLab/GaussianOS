@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# P1 runtime products are reproducible and must not be committed.
+artifacts/
+benchmark_runs/
+.gaussian-factory/
+
+# Keep local source media out of Git.
+testvid/

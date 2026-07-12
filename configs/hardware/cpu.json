@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0.0",
+  "hardware_profile": "cpu",
+  "worker_concurrency": 1,
+  "default_timeout_seconds": 3600,
+  "cuda_visible_devices": null
+}

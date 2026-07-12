@@ -1,0 +1,462 @@
+{
+  "$defs": {
+    "CoordinateSystemSpec": {
+      "additionalProperties": false,
+      "description": "The one coordinate system accepted by SceneBundle v1.",
+      "properties": {
+        "camera_transform": {
+          "const": "cam2world",
+          "default": "cam2world",
+          "title": "Camera Transform",
+          "type": "string"
+        },
+        "handedness": {
+          "const": "right_handed",
+          "default": "right_handed",
+          "title": "Handedness",
+          "type": "string"
+        },
+        "x_axis": {
+          "const": "right",
+          "default": "right",
+          "title": "X Axis",
+          "type": "string"
+        },
+        "y_axis": {
+          "const": "down",
+          "default": "down",
+          "title": "Y Axis",
+          "type": "string"
+        },
+        "z_axis": {
+          "const": "forward",
+          "default": "forward",
+          "title": "Z Axis",
+          "type": "string"
+        }
+      },
+      "title": "CoordinateSystemSpec",
+      "type": "object"
+    },
+    "InputFileHash": {
+      "additionalProperties": false,
+      "properties": {
+        "logical_path": {
+          "minLength": 1,
+          "title": "Logical Path",
+          "type": "string"
+        },
+        "sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "logical_path",
+        "sha256"
+      ],
+      "title": "InputFileHash",
+      "type": "object"
+    },
+    "NormalizationTransform": {
+      "additionalProperties": false,
+      "description": "Affine transform from the source world into the stored SceneBundle world.",
+      "properties": {
+        "source_to_scene": {
+          "default": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            }
+          ],
+          "title": "Source To Scene",
+          "type": "array"
+        }
+      },
+      "title": "NormalizationTransform",
+      "type": "object"
+    },
+    "PluginProvenance": {
+      "additionalProperties": false,
+      "description": "Reproducibility and licensing facts for one algorithm plugin.",
+      "properties": {
+        "checkpoint_license": {
+          "minLength": 1,
+          "title": "Checkpoint License",
+          "type": "string"
+        },
+        "code_license": {
+          "minLength": 1,
+          "title": "Code License",
+          "type": "string"
+        },
+        "config_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Config Sha256",
+          "type": "string"
+        },
+        "plugin_id": {
+          "minLength": 1,
+          "title": "Plugin Id",
+          "type": "string"
+        },
+        "plugin_version": {
+          "minLength": 1,
+          "title": "Plugin Version",
+          "type": "string"
+        },
+        "upstream_commit": {
+          "maxLength": 40,
+          "minLength": 40,
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Upstream Commit",
+          "type": "string"
+        },
+        "weight_sha256": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Weight Sha256",
+          "type": "array"
+        }
+      },
+      "required": [
+        "plugin_id",
+        "plugin_version",
+        "upstream_commit",
+        "config_sha256",
+        "weight_sha256",
+        "code_license",
+        "checkpoint_license"
+      ],
+      "title": "PluginProvenance",
+      "type": "object"
+    },
+    "ScenePayloadIndex": {
+      "additionalProperties": false,
+      "properties": {
+        "cameras": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TensorArtifactReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "gaussians": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TensorArtifactReference"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ScenePayloadIndex",
+      "type": "object"
+    },
+    "SphericalHarmonicsSpec": {
+      "additionalProperties": false,
+      "description": "Real SH layout used by Graphdeco-compatible Gaussian payloads.",
+      "properties": {
+        "basis": {
+          "const": "graphdeco_real_sh",
+          "default": "graphdeco_real_sh",
+          "title": "Basis",
+          "type": "string"
+        },
+        "channel_order": {
+          "const": "rgb",
+          "default": "rgb",
+          "title": "Channel Order",
+          "type": "string"
+        },
+        "degree": {
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Degree",
+          "type": "integer"
+        },
+        "ordering": {
+          "const": "degree_major_m_neg_to_pos",
+          "default": "degree_major_m_neg_to_pos",
+          "title": "Ordering",
+          "type": "string"
+        }
+      },
+      "required": [
+        "degree"
+      ],
+      "title": "SphericalHarmonicsSpec",
+      "type": "object"
+    },
+    "TensorArtifactReference": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_size": {
+          "minimum": 0,
+          "title": "Byte Size",
+          "type": "integer"
+        },
+        "relative_path": {
+          "minLength": 1,
+          "title": "Relative Path",
+          "type": "string"
+        },
+        "sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "tensors": {
+          "additionalProperties": {
+            "$ref": "#/$defs/TensorSpec"
+          },
+          "minProperties": 1,
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Tensors",
+          "type": "object"
+        }
+      },
+      "required": [
+        "relative_path",
+        "sha256",
+        "byte_size",
+        "tensors"
+      ],
+      "title": "TensorArtifactReference",
+      "type": "object"
+    },
+    "TensorSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "dtype": {
+          "enum": [
+            "float32",
+            "float64",
+            "int32",
+            "int64",
+            "uint8"
+          ],
+          "title": "Dtype",
+          "type": "string"
+        },
+        "shape": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Shape",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dtype",
+        "shape"
+      ],
+      "title": "TensorSpec",
+      "type": "object"
+    }
+  },
+  "$id": "https://gaussian-factory.local/schemas/scene-bundle-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Authoritative metadata for one SceneBundle v1 directory.",
+  "properties": {
+    "camera_convention": {
+      "const": "opencv_cam2world",
+      "default": "opencv_cam2world",
+      "title": "Camera Convention",
+      "type": "string"
+    },
+    "color_space": {
+      "enum": [
+        "linear_srgb",
+        "srgb"
+      ],
+      "title": "Color Space",
+      "type": "string"
+    },
+    "coordinate_system": {
+      "$ref": "#/$defs/CoordinateSystemSpec"
+    },
+    "has_metric_scale": {
+      "title": "Has Metric Scale",
+      "type": "boolean"
+    },
+    "input_files": {
+      "items": {
+        "$ref": "#/$defs/InputFileHash"
+      },
+      "minItems": 1,
+      "title": "Input Files",
+      "type": "array"
+    },
+    "normalization_transform": {
+      "$ref": "#/$defs/NormalizationTransform"
+    },
+    "payloads": {
+      "$ref": "#/$defs/ScenePayloadIndex"
+    },
+    "quaternion_order": {
+      "const": "wxyz",
+      "default": "wxyz",
+      "title": "Quaternion Order",
+      "type": "string"
+    },
+    "reconstruction_plugin": {
+      "$ref": "#/$defs/PluginProvenance"
+    },
+    "schema_version": {
+      "const": "scene-bundle/v1",
+      "default": "scene-bundle/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "spherical_harmonics": {
+      "$ref": "#/$defs/SphericalHarmonicsSpec"
+    },
+    "trainer_plugin": {
+      "$ref": "#/$defs/PluginProvenance"
+    },
+    "world_unit": {
+      "enum": [
+        "meters",
+        "centimeters",
+        "millimeters",
+        "scene_units"
+      ],
+      "title": "World Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "world_unit",
+    "has_metric_scale",
+    "spherical_harmonics",
+    "color_space",
+    "input_files",
+    "reconstruction_plugin",
+    "trainer_plugin"
+  ],
+  "title": "SceneBundleManifest",
+  "type": "object"
+}

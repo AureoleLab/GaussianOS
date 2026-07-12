@@ -1,0 +1,324 @@
+{
+  "schema_version": "third-party-lock/v1",
+  "verified_at": "2026-07-12T01:21:41Z",
+  "verification_policy": "Only upstream project repositories, official project pages, official papers, and publisher-owned model repositories were used.",
+  "production_candidates": [
+    {
+      "id": "ffmpeg",
+      "role": "video_ingest",
+      "version": "n8.1.2",
+      "source": {
+        "repository": "https://git.ffmpeg.org/ffmpeg.git",
+        "official_github_mirror": "https://github.com/FFmpeg/FFmpeg",
+        "ref": "n8.1.2",
+        "commit": "38b88335f99e76ed89ff3c93f877fdefce736c13"
+      },
+      "license": {
+        "expression_for_approved_build": "LGPL-2.1-or-later",
+        "source_url": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/38b88335f99e76ed89ff3c93f877fdefce736c13/LICENSE.md",
+        "lgpl_text_url": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/38b88335f99e76ed89ff3c93f877fdefce736c13/COPYING.LGPLv2.1",
+        "lgpl_text_sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30",
+        "build_gate": "Production redistribution must use an audited build without --enable-gpl or --enable-nonfree. The locally observed Gyan build has --enable-gpl --enable-version3 and is therefore GPLv3, not the approved redistribution build."
+      },
+      "weights": [],
+      "allowed_in_production": true,
+      "local_runtime_status": "installed_unapproved_build"
+    },
+    {
+      "id": "colmap",
+      "role": "default_reconstruction_and_bundle_adjustment",
+      "version": "3.13.0",
+      "source": {
+        "repository": "https://github.com/colmap/colmap",
+        "ref": "3.13.0",
+        "commit": "0b31f98133b470eae62811b557dc2bcff1e4f9a5"
+      },
+      "license": {
+        "expression": "BSD-3-Clause",
+        "source_url": "https://raw.githubusercontent.com/colmap/colmap/0b31f98133b470eae62811b557dc2bcff1e4f9a5/COPYING.txt",
+        "text_sha256": "ab30dabb4f0a6731f980108f57aa160cc8f5cebae6984e01a5d109df99669233"
+      },
+      "distribution_artifact": {
+        "name": "colmap-x64-windows-cuda.zip",
+        "url": "https://github.com/colmap/colmap/releases/download/3.13.0/colmap-x64-windows-cuda.zip",
+        "size_bytes": 258390514,
+        "sha256": "60f77bd8e9823e6d2b39082ee665f69c91900011d5321fc54a4dfebe3de110b7",
+        "hash_source": "https://api.github.com/repos/colmap/colmap/releases/tags/3.13.0"
+      },
+      "weights": [],
+      "allowed_in_production": true,
+      "local_runtime_status": "installed_hash_verified_and_reconstruction_executed"
+    },
+    {
+      "id": "mapanything_apache",
+      "role": "reconstruction_fallback_before_colmap_ba",
+      "version": "v1.1.2",
+      "source": {
+        "repository": "https://github.com/facebookresearch/map-anything",
+        "ref": "v1.1.2",
+        "commit": "c845b8f4f6cde0c20aecd87573656c3f69f5b2b0"
+      },
+      "license": {
+        "expression": "Apache-2.0",
+        "source_url": "https://raw.githubusercontent.com/facebookresearch/map-anything/c845b8f4f6cde0c20aecd87573656c3f69f5b2b0/LICENSE",
+        "text_sha256": "a172097153c8dec07f872bf749f4f856351b0690fde58ab2c4f570fc1d354931"
+      },
+      "weights": [
+        {
+          "repository": "https://huggingface.co/facebook/map-anything-apache",
+          "revision": "00f9c245bbcb60522d1ed7f9e9d88462c6e3f38a",
+          "path": "model.safetensors",
+          "size_bytes": 4914062480,
+          "sha256": "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201",
+          "license": "Apache-2.0",
+          "hash_source": "https://huggingface.co/api/models/facebook/map-anything-apache/tree/main?recursive=true&expand=true"
+        }
+      ],
+      "allowed_in_production": true,
+      "local_runtime_status": "not_downloaded_not_executed"
+    },
+    {
+      "id": "gsplat",
+      "role": "default_gaussian_trainer_backend",
+      "version": "v1.5.3",
+      "source": {
+        "repository": "https://github.com/nerfstudio-project/gsplat",
+        "ref": "v1.5.3",
+        "commit": "937e29912570c372bed6747a5c9bf85fed877bae"
+      },
+      "license": {
+        "expression": "Apache-2.0",
+        "source_url": "https://raw.githubusercontent.com/nerfstudio-project/gsplat/937e29912570c372bed6747a5c9bf85fed877bae/LICENSE",
+        "text_sha256": "96a4f89293c0df19880da9b0e35f67589f5885ea61b224ef16bb2bd599a8a44d"
+      },
+      "weights": [],
+      "allowed_in_production": true,
+      "local_runtime_status": "not_installed"
+    },
+    {
+      "id": "faster_gs",
+      "role": "high_speed_gaussian_trainer_candidate",
+      "version": "commit-2026-07-11",
+      "source": {
+        "repository": "https://github.com/nerficg-project/faster-gaussian-splatting",
+        "ref": "main",
+        "commit": "ae2bf807314401c83fc18ba577981c91112058f9"
+      },
+      "license": {
+        "expression": "Apache-2.0",
+        "source_url": "https://raw.githubusercontent.com/nerficg-project/faster-gaussian-splatting/ae2bf807314401c83fc18ba577981c91112058f9/LICENSE",
+        "text_sha256": "fbc7eb263b76125bde9359c3c35f104ed5d1036d9c502ab9fdf2942da33e2a5c"
+      },
+      "weights": [],
+      "required_framework_lock": "nerficg_framework",
+      "allowed_in_production": true,
+      "local_runtime_status": "not_installed_cuda_12_8_recommended_but_local_toolkit_is_12_6"
+    },
+    {
+      "id": "brush",
+      "role": "preview_compatibility_consumer",
+      "version": "v0.3.0",
+      "source": {
+        "repository": "https://github.com/ArthurBrussee/brush",
+        "ref": "v0.3.0",
+        "commit": "3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486"
+      },
+      "license": {
+        "expression": "Apache-2.0",
+        "source_url": "https://raw.githubusercontent.com/ArthurBrussee/brush/3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486/LICENSE",
+        "text_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      "distribution_artifact": {
+        "name": "brush-app-x86_64-pc-windows-msvc.zip",
+        "url": "https://github.com/ArthurBrussee/brush/releases/download/v0.3.0/brush-app-x86_64-pc-windows-msvc.zip",
+        "size_bytes": 158791348,
+        "sha256": "b68e3e9cf052d51bf3ee30776fa5a364de7f2ba13b58443128ff797bb7bcfcd6",
+        "executable_sha256": "37e46cbf808b9983dd15a5f9a25328dbe43e7e06d53c4f59fbeaeb10e3a5b34a",
+        "hash_source": "https://api.github.com/repos/ArthurBrussee/brush/releases/tags/v0.3.0"
+      },
+      "weights": [],
+      "allowed_in_production": true,
+      "local_runtime_status": "installed_hash_verified_and_graphdeco_ply_loaded_with_negative_control"
+    },
+    {
+      "id": "splat_transform",
+      "role": "independent_ply_compatibility_consumer",
+      "version": "v3.0.0",
+      "source": {
+        "repository": "https://github.com/playcanvas/splat-transform",
+        "ref": "v3.0.0",
+        "commit": "daf63383f32effe5cd63faa67ff030d39bfa543e"
+      },
+      "license": {
+        "expression": "MIT",
+        "source_url": "https://raw.githubusercontent.com/playcanvas/splat-transform/daf63383f32effe5cd63faa67ff030d39bfa543e/LICENSE",
+        "text_sha256": "42fa51ddd556be151a29f381fb97ee975825dcc454e805ea3ea9c079cca04d34"
+      },
+      "weights": [],
+      "allowed_in_production": true,
+      "local_runtime_status": "not_installed_node_and_npm_available"
+    }
+  ],
+  "supporting_locks": [
+    {
+      "id": "nerficg_framework",
+      "required_by": "faster_gs",
+      "version": "commit-2026-07-12",
+      "source": {
+        "repository": "https://github.com/nerficg-project/nerficg",
+        "ref": "main",
+        "commit": "c7437127af1681f565a57fcd9d7819fde1adc0a7"
+      },
+      "license": {
+        "expression": "MIT",
+        "source_url": "https://raw.githubusercontent.com/nerficg-project/nerficg/c7437127af1681f565a57fcd9d7819fde1adc0a7/LICENSE",
+        "text_sha256": "f3bc58f49d2906b7154c778ff6b732e804b8149c571a8d3ae8934c80daa8a6ac"
+      },
+      "transitive_dependency_audit": "incomplete"
+    }
+  ],
+  "research_only": [
+    {
+      "id": "gluemap",
+      "role": "research_reconstruction",
+      "version": "0.1.0+commit-2026-06-22",
+      "source": {
+        "repository": "https://github.com/colmap/gluemap",
+        "ref": "main",
+        "commit": "adc9e4bb5f41014d3f7c157a879edc278588c829"
+      },
+      "license": {
+        "expression": "BSD-3-Clause",
+        "source_url": "https://raw.githubusercontent.com/colmap/gluemap/adc9e4bb5f41014d3f7c157a879edc278588c829/LICENSE",
+        "text_sha256": "d27c2ac268d959f76655ed424e2e2918049320432ca852346cf4b444227f8e41",
+        "scope_warning": "The upstream README explicitly says this covers GLUEMAP itself only; third-party dependencies and checkpoints retain separate licenses."
+      },
+      "weights": [
+        {"id": "pi3", "status": "unlocked"},
+        {"id": "salad", "status": "unlocked"},
+        {"id": "vggsfm_tracker", "status": "unlocked"},
+        {"id": "doppelgangers_plus_plus", "status": "unlocked"}
+      ],
+      "allowed_in_production": false,
+      "execution_allowed": false,
+      "block_reason": "Research-only by product policy and checkpoint license/hash closure is incomplete."
+    },
+    {
+      "id": "vggt_omega",
+      "role": "research_reconstruction",
+      "version": "0.0.1+commit-2026-05-18",
+      "source": {
+        "repository": "https://github.com/facebookresearch/vggt-omega",
+        "ref": "main",
+        "commit": "39a0cb8af88554f15ddcb5354cd52bde588fa014"
+      },
+      "license": {
+        "expression": "LicenseRef-FAIR-Noncommercial-Research-1.0",
+        "source_url": "https://raw.githubusercontent.com/facebookresearch/vggt-omega/39a0cb8af88554f15ddcb5354cd52bde588fa014/LICENSE",
+        "text_sha256": "27696e51930daf5d24222e2d9d65339f529153e853de0e2eb457133a1a6f5239"
+      },
+      "weights": [
+        {
+          "repository": "https://huggingface.co/facebook/VGGT-Omega",
+          "revision": "05654241adc2f218dfb089c373a011f8a7040576",
+          "path": "vggt_omega_1b_512.pt",
+          "size_bytes": 4576706117,
+          "sha256": null,
+          "license": "CC-BY-NC-4.0",
+          "hash_status": "unavailable_without_accepting_gated_model_terms"
+        },
+        {
+          "repository": "https://huggingface.co/facebook/VGGT-Omega",
+          "revision": "05654241adc2f218dfb089c373a011f8a7040576",
+          "path": "vggt_omega_1b_256_text.pt",
+          "size_bytes": 5399490950,
+          "sha256": null,
+          "license": "CC-BY-NC-4.0",
+          "hash_status": "unavailable_without_accepting_gated_model_terms"
+        }
+      ],
+      "allowed_in_production": false,
+      "execution_allowed": false,
+      "block_reason": "Both code and checkpoints are non-commercial; checkpoint SHA-256 values are hidden by the gated official repository."
+    },
+    {
+      "id": "improved_gs",
+      "role": "research_gaussian_trainer",
+      "version": "commit-2026-06-05",
+      "source": {
+        "repository": "https://github.com/XiaoBin2001/Improved-GS",
+        "ref": "main",
+        "commit": "20b5db343a87c2f9fb4b70c6e39ff1f042a8a47a"
+      },
+      "license": {
+        "expression": "LicenseRef-ImprovedGS-NonCommercial-Research",
+        "source_url": "https://raw.githubusercontent.com/XiaoBin2001/Improved-GS/20b5db343a87c2f9fb4b70c6e39ff1f042a8a47a/LICENSE.md",
+        "text_sha256": "fb9527bcbe821a124c5070c6e5228bde6f2c39966cc9ee4a114c33f3c647fc7c",
+        "scope_warning": "Third-party subpackages retain their own licenses, including the Gaussian-Splatting license for simple-knn."
+      },
+      "weights": [],
+      "allowed_in_production": false,
+      "execution_allowed": true,
+      "block_reason": "May execute only from the research profile after its transitive dependency audit is complete."
+    }
+  ],
+  "compatibility_test_tools": [
+    {
+      "id": "gsply",
+      "version": "v0.4.6",
+      "source": {
+        "repository": "https://github.com/OpsiClear/gsply",
+        "commit": "363885c707d445ce5d925024e2ab536fc72c1b9d"
+      },
+      "license": "MIT",
+      "pypi_windows_cp313_wheel_sha256": "58eec5194c5fe39c39d1a00cfa29285957ae0138bee9d8b8ee461336c2bc60cd",
+      "scope": "optional compatibility test only; not a production runtime dependency"
+    },
+    {
+      "id": "plyfile",
+      "version": "v1.1.3",
+      "source": {
+        "repository": "https://github.com/dranjan/python-plyfile",
+        "commit": "071e2ba6a2246ffd74eecb7e2757bd6de25650ea"
+      },
+      "license": "GPL-3.0-only",
+      "pypi_wheel_sha256": "581302f07b1c298431dcaa9038bba2ae80f3f7868b29ccb826a07bc4488ff38a",
+      "scope": "optional generic PLY test only; forbidden from production runtime and distribution"
+    }
+  ],
+  "observed_local_tools": {
+    "evidence": "benchmarks/evidence/p1_environment.json",
+    "ffmpeg_source_short_commit": "38e89fe502",
+    "ffmpeg_source_commit": "38e89fe5022888f552dce95d168a60900ccffd17",
+    "ffmpeg_executable_sha256": "b50cb60dbb25170dda7dd23a630130d8630f70575fe08cf8dca54873056e5724",
+    "ffmpeg_build_license_effect": "GPLv3 because both --enable-gpl and --enable-version3 are present",
+    "colmap": "3.13.0",
+    "colmap_commit": "0b31f98133b470eae62811b557dc2bcff1e4f9a5",
+    "colmap_release_zip_sha256": "60f77bd8e9823e6d2b39082ee665f69c91900011d5321fc54a4dfebe3de110b7",
+    "colmap_executable_sha256": "74470eec4cd484b1875fed83e7cefa407e35e93ea05eb294f0bed5a34d7e4e1a",
+    "colmap_smoke_status": "all three scenes reconstructed, but full-frame inputs included designated holdouts and are not valid holdout benchmark runs",
+    "gpu": "NVIDIA GeForce RTX 5090",
+    "gpu_compute_capability": "12.0",
+    "gpu_memory_mib": 32607,
+    "driver": "591.44",
+    "cuda_toolkit": "12.6",
+    "torch": "2.9.1+cu126",
+    "torch_supports_sm_120": false,
+    "isolated_gsplat_worker_torch": "2.9.1+cu130",
+    "isolated_gsplat_worker_torch_supports_sm_120": true,
+    "isolated_gsplat_cuda_tensor_smoke": "PASS",
+    "gsplat_1_5_3_build": "BLOCKED: CUDA 13.0 nvcc.exe and MSVC cl.exe unavailable",
+    "brush": "0.3.0",
+    "brush_release_zip_sha256": "b68e3e9cf052d51bf3ee30776fa5a364de7f2ba13b58443128ff797bb7bcfcd6",
+    "brush_executable_sha256": "37e46cbf808b9983dd15a5f9a25328dbe43e7e06d53c4f59fbeaeb10e3a5b34a",
+    "brush_graphdeco_ply_load": "PASS with malformed-file negative control"
+  },
+  "future_unvalidated": [
+    {
+      "id": "colmap",
+      "version": "4.1.0",
+      "source_commit": "fa8e3b3ff591552855f8ad2806723c80f963f69c",
+      "status": "not_the_p1_production_lock_and_not_runtime_validated"
+    }
+  ]
+}

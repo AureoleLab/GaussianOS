@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.0.0",
+  "profile": "production",
+  "allow_plugins": [
+    "ingest.ffmpeg",
+    "frame_qc.builtin",
+    "legacy_import.builtin",
+    "recon.colmap",
+    "recon.mapanything",
+    "train.gsplat",
+    "train.fastergs",
+    "preview.brush",
+    "export.formats",
+    "probe.contract"
+  ],
+  "deny_plugins": [
+    "recon.gluemap",
+    "recon.vggt_omega",
+    "train.improvedgs"
+  ],
+  "allow_research_only": false,
+  "allowed_code_licenses": [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT"
+  ],
+  "allowed_checkpoint_licenses": [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CC-BY-4.0",
+    "MIT"
+  ],
+  "require_exact_third_party_provenance": true,
+  "require_profile_lock_for_third_party": true,
+  "plugin_requirements": {
+    "ingest.ffmpeg": {
+      "allowed_versions": ["n8.1.2"],
+      "allowed_upstream_commits": ["38b88335f99e76ed89ff3c93f877fdefce736c13"],
+      "required_code_license": "LGPL-2.1-or-later",
+      "required_checkpoint_licenses": {},
+      "required_checkpoint_sha256": {},
+      "required_dependency_commits": {}
+    },
+    "recon.colmap": {
+      "allowed_versions": ["3.13.0"],
+      "allowed_upstream_commits": ["0b31f98133b470eae62811b557dc2bcff1e4f9a5"],
+      "required_code_license": "BSD-3-Clause",
+      "required_checkpoint_licenses": {},
+      "required_checkpoint_sha256": {},
+      "required_dependency_commits": {}
+    },
+    "recon.mapanything": {
+      "allowed_versions": ["v1.1.2"],
+      "allowed_upstream_commits": ["c845b8f4f6cde0c20aecd87573656c3f69f5b2b0"],
+      "required_code_license": "Apache-2.0",
+      "required_checkpoint_licenses": {
+        "mapanything-apache": "Apache-2.0"
+      },
+      "required_checkpoint_sha256": {
+        "mapanything-apache": "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201"
+      },
+      "required_dependency_commits": {
+        "colmap-ba": "0b31f98133b470eae62811b557dc2bcff1e4f9a5"
+      }
+    },
+    "train.gsplat": {
+      "allowed_versions": ["v1.5.3"],
+      "allowed_upstream_commits": ["937e29912570c372bed6747a5c9bf85fed877bae"],
+      "required_code_license": "Apache-2.0",
+      "required_checkpoint_licenses": {},
+      "required_checkpoint_sha256": {},
+      "required_dependency_commits": {}
+    },
+    "train.fastergs": {
+      "allowed_versions": ["commit-2026-07-11"],
+      "allowed_upstream_commits": ["ae2bf807314401c83fc18ba577981c91112058f9"],
+      "required_code_license": "Apache-2.0",
+      "required_checkpoint_licenses": {},
+      "required_checkpoint_sha256": {},
+      "required_dependency_commits": {
+        "nerficg-framework": "c7437127af1681f565a57fcd9d7819fde1adc0a7"
+      }
+    },
+    "preview.brush": {
+      "allowed_versions": ["v0.3.0"],
+      "allowed_upstream_commits": ["3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486"],
+      "required_code_license": "Apache-2.0",
+      "required_checkpoint_licenses": {},
+      "required_checkpoint_sha256": {},
+      "required_dependency_commits": {}
+    }
+  }
+}

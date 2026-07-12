@@ -1,0 +1,35 @@
+{
+  "schema_version": "p1-runtime-update/v1",
+  "recorded_at": "2026-07-12T06:55:00Z",
+  "isolated_cuda": {
+    "python": "3.10.20",
+    "torch": "2.9.1+cu130",
+    "torch_cuda": "13.0",
+    "compiled_arches": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120"],
+    "device": "NVIDIA GeForce RTX 5090",
+    "device_capability": [12, 0],
+    "tensor_operation": "PASS"
+  },
+  "gsplat": {
+    "version": "1.5.3",
+    "commit": "937e29912570c372bed6747a5c9bf85fed877bae",
+    "status": "BUILD_BLOCKED",
+    "reason": "CUDA 13 nvcc.exe and MSVC cl.exe are unavailable",
+    "training_executed": false
+  },
+  "brush": {
+    "version": "0.3.0",
+    "commit": "3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486",
+    "release_zip_sha256": "b68e3e9cf052d51bf3ee30776fa5a364de7f2ba13b58443128ff797bb7bcfcd6",
+    "executable_sha256": "37e46cbf808b9983dd15a5f9a25328dbe43e7e06d53c4f59fbeaeb10e3a5b34a",
+    "valid_graphdeco_ply_exit_code": 0,
+    "malformed_ply_exit_code": 1,
+    "status": "PASS"
+  },
+  "colmap_train_only": {
+    "status": "PASS",
+    "worker_contract": true,
+    "atomic_artifact_commit": true,
+    "results_csv": "benchmarks/reconstruction_results.csv"
+  }
+}

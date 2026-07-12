@@ -1,0 +1,343 @@
+{
+  "commands": {
+    "brush": {
+      "available": false,
+      "executable": null,
+      "probe": null
+    },
+    "cargo": {
+      "available": false,
+      "executable": null,
+      "probe": null
+    },
+    "colmap": {
+      "available": true,
+      "executable": "I:\\GaussianOS\\.gaussian-factory\\tools\\colmap\\3.13.0\\bin\\colmap.exe",
+      "executable_sha256": "74470eec4cd484b1875fed83e7cefa407e35e93ea05eb294f0bed5a34d7e4e1a",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "COLMAP 3.13.0 -- Structure-from-Motion and Multi-View Stereo\n(Commit 0b31f98 on 2025-11-07 with CUDA)\n\nUsage:\n  colmap [command] [options]\nDocumentation:\n  https://colmap.github.io/\nExample usage:\n  colmap help [ -h, --help ]\n  colmap gui\n  colmap gui -h [ --help ]\n  colmap automatic_reconstructor -h [ --help ]\n  colmap automatic_reconstructor --image_path IMAGES --workspace_path WORKSPACE\n  colmap feature_extractor --image_path IMAGES --database_path DATABASE\n  colmap exhaustive_matcher --database_path DATABASE\n  colmap mapper --image_path IMAGES --database_path DATABASE --output_path MODEL\n  ...\nAvailable commands:\n  help\n  gui\n  automatic_reconstructor\n  bundle_adjuster\n  color_extractor\n  database_cleaner\n  database_creator\n  database_merger\n  delaunay_mesher\n  exhaustive_matcher\n  feature_extractor\n  feature_importer\n  geometric_verifier\n  hierarchical_mapper\n  image_deleter\n  image_filterer\n  image_rectifier\n  image_registrator\n  image_undistorter\n  image_undistorter_standalone\n  mapper\n  matches_importer\n  model_aligner\n  model_analyzer\n  model_comparer\n  model_converter\n  model_cropper\n  model_merger\n  model_orientation_aligner\n  model_splitter\n  model_transformer\n  patch_match_stereo\n  point_filtering\n  point_triangulator\n  pose_prior_mapper\n  poisson_mesher\n  project_generator\n  rig_configurator\n  sequential_matcher\n  spatial_matcher\n  stereo_fusion\n  transitive_matcher\n  vocab_tree_builder\n  vocab_tree_matcher\n  vocab_tree_retriever\n\n"
+      }
+    },
+    "ffmpeg": {
+      "available": true,
+      "executable": "C:\\Users\\win10\\ffmppeg\\ffmpeg-2025-12-31-git-38e89fe502-full_build\\bin\\ffmpeg.exe",
+      "executable_sha256": "b50cb60dbb25170dda7dd23a630130d8630f70575fe08cf8dca54873056e5724",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "ffmpeg version 2025-12-31-git-38e89fe502-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers\nbuilt with gcc 15.2.0 (Rev8, Built by MSYS2 project)\nconfiguration: --enable-gpl --enable-version3 --enable-static --disable-w32threads --disable-autodetect --enable-cairo --enable-fontconfig --enable-iconv --enable-gnutls --enable-lcms2 --enable-libxml2 --enable-gmp --enable-bzlib --enable-lzma --enable-libsnappy --enable-zlib --enable-librist --enable-libsrt --enable-libssh --enable-libzmq --enable-avisynth --enable-libbluray --enable-libcaca --enable-libdvdnav --enable-libdvdread --enable-sdl2 --enable-libaribb24 --enable-libaribcaption --enable-libdav1d --enable-libdavs2 --enable-libopenjpeg --enable-libquirc --enable-libuavs3d --enable-libxevd --enable-libzvbi --enable-liboapv --enable-libqrencode --enable-librav1e --enable-libsvtav1 --enable-libvvenc --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxeve --enable-libxvid --enable-libaom --enable-libjxl --enable-libsvtjpegxs --enable-libvpx --enable-mediafoundation --enable-libass --enable-frei0r --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-liblensfun --enable-libvidstab --enable-libvmaf --enable-libzimg --enable-amf --enable-cuda-llvm --enable-cuvid --enable-dxva2 --enable-d3d11va --enable-d3d12va --enable-ffnvcodec --enable-libvpl --enable-nvdec --enable-nvenc --enable-vaapi --enable-libshaderc --enable-vulkan --enable-libplacebo --enable-opencl --enable-libcdio --enable-openal --enable-libgme --enable-libmodplug --enable-libopenmpt --enable-libopencore-amrwb --enable-libmp3lame --enable-libshine --enable-libtheora --enable-libtwolame --enable-libvo-amrwbenc --enable-libcodec2 --enable-libilbc --enable-libgsm --enable-liblc3 --enable-libopencore-amrnb --enable-libopus --enable-libspeex --enable-libvorbis --enable-ladspa --enable-libbs2b --enable-libflite --enable-libmysofa --enable-librubberband --enable-libsoxr --enable-chromaprint --enable-whisper\nlibavutil      60. 21.102 / 60. 21.102\nlibavcodec     62. 23.102 / 62. 23.102\nlibavformat    62.  8.102 / 62.  8.102\nlibavdevice    62.  2.100 / 62.  2.100\nlibavfilter    11. 10.101 / 11. 10.101\nlibswscale      9.  3.100 /  9.  3.100\nlibswresample   6.  2.100 /  6.  2.100\n\nExiting with exit code 0\n"
+      }
+    },
+    "ffprobe": {
+      "available": true,
+      "executable": "C:\\Users\\win10\\ffmppeg\\ffmpeg-2025-12-31-git-38e89fe502-full_build\\bin\\ffprobe.exe",
+      "executable_sha256": "448c02f13b5fef6192ad3e8a8de8ea45c31122e085efd3ca0797b3bc0f771152",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "ffprobe version 2025-12-31-git-38e89fe502-full_build-www.gyan.dev Copyright (c) 2007-2025 the FFmpeg developers\nbuilt with gcc 15.2.0 (Rev8, Built by MSYS2 project)\nconfiguration: --enable-gpl --enable-version3 --enable-static --disable-w32threads --disable-autodetect --enable-cairo --enable-fontconfig --enable-iconv --enable-gnutls --enable-lcms2 --enable-libxml2 --enable-gmp --enable-bzlib --enable-lzma --enable-libsnappy --enable-zlib --enable-librist --enable-libsrt --enable-libssh --enable-libzmq --enable-avisynth --enable-libbluray --enable-libcaca --enable-libdvdnav --enable-libdvdread --enable-sdl2 --enable-libaribb24 --enable-libaribcaption --enable-libdav1d --enable-libdavs2 --enable-libopenjpeg --enable-libquirc --enable-libuavs3d --enable-libxevd --enable-libzvbi --enable-liboapv --enable-libqrencode --enable-librav1e --enable-libsvtav1 --enable-libvvenc --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxeve --enable-libxvid --enable-libaom --enable-libjxl --enable-libsvtjpegxs --enable-libvpx --enable-mediafoundation --enable-libass --enable-frei0r --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-liblensfun --enable-libvidstab --enable-libvmaf --enable-libzimg --enable-amf --enable-cuda-llvm --enable-cuvid --enable-dxva2 --enable-d3d11va --enable-d3d12va --enable-ffnvcodec --enable-libvpl --enable-nvdec --enable-nvenc --enable-vaapi --enable-libshaderc --enable-vulkan --enable-libplacebo --enable-opencl --enable-libcdio --enable-openal --enable-libgme --enable-libmodplug --enable-libopenmpt --enable-libopencore-amrwb --enable-libmp3lame --enable-libshine --enable-libtheora --enable-libtwolame --enable-libvo-amrwbenc --enable-libcodec2 --enable-libilbc --enable-libgsm --enable-liblc3 --enable-libopencore-amrnb --enable-libopus --enable-libspeex --enable-libvorbis --enable-ladspa --enable-libbs2b --enable-libflite --enable-libmysofa --enable-librubberband --enable-libsoxr --enable-chromaprint --enable-whisper\nlibavutil      60. 21.102 / 60. 21.102\nlibavcodec     62. 23.102 / 62. 23.102\nlibavformat    62.  8.102 / 62.  8.102\nlibavdevice    62.  2.100 / 62.  2.100\nlibavfilter    11. 10.101 / 11. 10.101\nlibswscale      9.  3.100 /  9.  3.100\nlibswresample   6.  2.100 /  6.  2.100\n"
+      }
+    },
+    "git": {
+      "available": true,
+      "executable": "C:\\Program Files\\Git\\cmd\\git.exe",
+      "executable_sha256": "54194a1af7cfb6730448ce14b8f2c1dddd9f950b7f995dc351c1ed16eb179249",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "git version 2.51.2.windows.1\n"
+      }
+    },
+    "node": {
+      "available": true,
+      "executable": "C:\\Program Files\\nodejs\\node.exe",
+      "executable_sha256": "63c259c81e5d472b5f11c8d506070130cb04a1ecf84b80377a34ed6ec9048088",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "v24.14.0\n"
+      }
+    },
+    "npm": {
+      "available": true,
+      "executable": "C:\\Program Files\\nodejs\\npm.cmd",
+      "executable_sha256": "21b46c69ad6e2f231f02a9e120f4ba6c8e75fef5a45637103002eab99f888ab8",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "11.9.0\n"
+      }
+    },
+    "nvcc": {
+      "available": true,
+      "executable": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.6\\bin\\nvcc.exe",
+      "executable_sha256": "cad56c22529a97b0c3373d5d04c1e03831d95f27f1a6f9297edf97d4bdfa008b",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2024 NVIDIA Corporation\nBuilt on Wed_Oct_30_01:18:48_Pacific_Daylight_Time_2024\nCuda compilation tools, release 12.6, V12.6.85\nBuild cuda_12.6.r12.6/compiler.35059454_0\n"
+      }
+    },
+    "nvidia_smi": {
+      "available": true,
+      "executable": "C:\\Windows\\System32\\nvidia-smi.exe",
+      "executable_sha256": "becc6dd44d71702283bdb815d5bf34e6d95156095438a79a29331683538606eb",
+      "probe": {
+        "exit_code": 0,
+        "status": "ok",
+        "stderr": "",
+        "stdout": "NVIDIA GeForce RTX 5090, 591.44, 32607, 12.0\n"
+      }
+    },
+    "rustc": {
+      "available": false,
+      "executable": null,
+      "probe": null
+    },
+    "splat_transform": {
+      "available": false,
+      "executable": null,
+      "probe": null
+    }
+  },
+  "created_at": "2026-07-12T01:35:25.939357+00:00",
+  "host": {
+    "logical_cpu_count": 32,
+    "machine": "AMD64",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python_executable": "C:\\Users\\win10\\miniconda3\\python.exe",
+    "python_version": "3.13.9"
+  },
+  "input": {
+    "files": [
+      {
+        "media": {
+          "metadata": {
+            "format": {
+              "bit_rate": "45135889",
+              "duration": "2.581333",
+              "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+              "size": "14563845"
+            },
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "avg_frame_rate": "60000/1001",
+                "codec_name": "h264",
+                "codec_type": "video",
+                "height": 1080,
+                "index": 0,
+                "nb_frames": "154",
+                "pix_fmt": "yuv420p",
+                "width": 1920
+              },
+              {
+                "avg_frame_rate": "0/0",
+                "channels": 2,
+                "codec_name": "aac",
+                "codec_type": "audio",
+                "index": 1,
+                "nb_frames": "121",
+                "sample_rate": "48000"
+              },
+              {
+                "avg_frame_rate": "60000/1001",
+                "codec_type": "data",
+                "index": 2,
+                "nb_frames": "1"
+              }
+            ]
+          },
+          "status": "ok"
+        },
+        "name": "001.mp4",
+        "sha256": "301f10163a94fa0ef0c163a413fcc32cf3e14ff1647897565f09b9b888b0be57",
+        "size_bytes": 14563845
+      },
+      {
+        "media": {
+          "metadata": {
+            "format": {
+              "bit_rate": "42606778",
+              "duration": "2.240000",
+              "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+              "size": "11929898"
+            },
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "avg_frame_rate": "60000/1001",
+                "codec_name": "h264",
+                "codec_type": "video",
+                "height": 1080,
+                "index": 0,
+                "nb_frames": "133",
+                "pix_fmt": "yuv420p",
+                "width": 1920
+              },
+              {
+                "avg_frame_rate": "0/0",
+                "channels": 2,
+                "codec_name": "aac",
+                "codec_type": "audio",
+                "index": 1,
+                "nb_frames": "105",
+                "sample_rate": "48000"
+              },
+              {
+                "avg_frame_rate": "60000/1001",
+                "codec_type": "data",
+                "index": 2,
+                "nb_frames": "1"
+              }
+            ]
+          },
+          "status": "ok"
+        },
+        "name": "002.mp4",
+        "sha256": "4846b11f8bfcac9cada0c114f4cf3cb45c789db8134d8b7a9db285b8d9bcbca2",
+        "size_bytes": 11929898
+      },
+      {
+        "media": {
+          "metadata": {
+            "format": {
+              "bit_rate": "41403676",
+              "duration": "2.816000",
+              "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+              "size": "14574094"
+            },
+            "programs": [],
+            "stream_groups": [],
+            "streams": [
+              {
+                "avg_frame_rate": "60000/1001",
+                "codec_name": "h264",
+                "codec_type": "video",
+                "height": 1080,
+                "index": 0,
+                "nb_frames": "168",
+                "pix_fmt": "yuv420p",
+                "width": 1920
+              },
+              {
+                "avg_frame_rate": "0/0",
+                "channels": 2,
+                "codec_name": "aac",
+                "codec_type": "audio",
+                "index": 1,
+                "nb_frames": "132",
+                "sample_rate": "48000"
+              },
+              {
+                "avg_frame_rate": "60000/1001",
+                "codec_type": "data",
+                "index": 2,
+                "nb_frames": "1"
+              }
+            ]
+          },
+          "status": "ok"
+        },
+        "name": "003.mp4",
+        "sha256": "606e2c4c3b6af5f2894cdcd4d37e684e922f91afa6ec05ee5f440b2c09800e01",
+        "size_bytes": 14574094
+      }
+    ],
+    "inventory_sha256": "015cf2c587244c1efafb6b596b60d2b202ff6c41714faba46f33d856f7dfd10c",
+    "path": "I:\\GaussianOS\\testvid",
+    "status": "ok"
+  },
+  "prepared_dataset": {
+    "dataset_id": "sha256:152be2c9901a8652daa032ab5c35a65aaf3aa83fc1deb1a1afa41a2a2a3ab33d",
+    "manifest_sha256": "123addb8508d3ea3fa20a312c9e3c03ba0cb0c4d05a3ca51ce44afe25b3cd66c",
+    "path": "I:\\GaussianOS\\benchmark_runs\\p1_dataset_v1\\dataset.manifest.json",
+    "protocol_version": "p1-static-video-v1",
+    "sampling": {
+      "frames_per_second": 15.0,
+      "holdout_offset": 4,
+      "holdout_stride": 8,
+      "image_format": "png",
+      "qc_is_advisory_only": true
+    },
+    "scenes": [
+      {
+        "frame_count": 39,
+        "holdout_count": 5,
+        "scene_id": "001",
+        "train_count": 34
+      },
+      {
+        "frame_count": 33,
+        "holdout_count": 4,
+        "scene_id": "002",
+        "train_count": 29
+      },
+      {
+        "frame_count": 42,
+        "holdout_count": 5,
+        "scene_id": "003",
+        "train_count": 37
+      }
+    ],
+    "status": "ok"
+  },
+  "probe_actions": {
+    "gaussian_training_executed_by_this_probe": false,
+    "reconstruction_executed_by_this_probe": false,
+    "third_party_ply_consumers_executed_by_this_probe": false
+  },
+  "python_packages": {
+    "gsplat": null,
+    "numpy": "2.3.5",
+    "pillow": "11.3.0",
+    "pycolmap": null,
+    "pydantic": "2.12.5",
+    "safetensors": "0.6.2",
+    "torch": "2.9.1+cu126"
+  },
+  "schema_version": "p1-environment-probe/v1",
+  "torch_runtime": {
+    "compiled_arch_compatible": false,
+    "expected_compiled_arch": "sm_120",
+    "runtime": {
+      "compiled_arches": [
+        "sm_50",
+        "sm_60",
+        "sm_61",
+        "sm_70",
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90"
+      ],
+      "cuda_available": true,
+      "device_capability": [
+        12,
+        0
+      ],
+      "device_name": "NVIDIA GeForce RTX 5090",
+      "imported": true,
+      "torch_cuda_version": "12.6",
+      "torch_version": "2.9.1+cu126"
+    },
+    "subprocess": {
+      "exit_code": 0,
+      "status": "ok",
+      "stderr": "C:\\Users\\win10\\miniconda3\\Lib\\site-packages\\torch\\cuda\\__init__.py:283: UserWarning: \n    Found GPU0 NVIDIA GeForce RTX 5090 which is of cuda capability 12.0.\n    Minimum and Maximum cuda capability supported by this version of PyTorch is\n    (5.0) - (9.0)\n    \n  warnings.warn(\nC:\\Users\\win10\\miniconda3\\Lib\\site-packages\\torch\\cuda\\__init__.py:304: UserWarning: \n    Please install PyTorch with a following CUDA\n    configurations:  12.8 13.0 following instructions at\n    https://pytorch.org/get-started/locally/\n    \n  warnings.warn(matched_cuda_warn.format(matched_arches))\nC:\\Users\\win10\\miniconda3\\Lib\\site-packages\\torch\\cuda\\__init__.py:326: UserWarning: \nNVIDIA GeForce RTX 5090 with CUDA capability sm_120 is not compatible with the current PyTorch installation.\nThe current PyTorch install supports CUDA capabilities sm_50 sm_60 sm_61 sm_70 sm_75 sm_80 sm_86 sm_90.\nIf you want to use the NVIDIA GeForce RTX 5090 GPU with PyTorch, please check the instructions at https://pytorch.org/get-started/locally/\n\n  warnings.warn(\n",
+      "stdout": "{\"compiled_arches\": [\"sm_50\", \"sm_60\", \"sm_61\", \"sm_70\", \"sm_75\", \"sm_80\", \"sm_86\", \"sm_90\"], \"cuda_available\": true, \"device_capability\": [12, 0], \"device_name\": \"NVIDIA GeForce RTX 5090\", \"imported\": true, \"torch_cuda_version\": \"12.6\", \"torch_version\": \"2.9.1+cu126\"}\n"
+    }
+  }
+}
