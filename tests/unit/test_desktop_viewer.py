@@ -32,6 +32,32 @@ def test_viewer_loads_validated_bundle_ply_and_camera_track(tmp_path, manifest_f
     np.testing.assert_allclose(scene.bounds_min, np.quantile(gaussians.means, 0.01, axis=0))
 
 
+def test_viewer_uses_only_registered_real_timeline_cameras(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud):
+    bundle, ply, points, _ = _scene(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud)
+    real = {
+        "image_id": 44,
+        "image_name": "frame_000060.png",
+        "cam2world": [[1, 0, 0, 3], [0, 1, 0, 4], [0, 0, 1, 5], [0, 0, 0, 1]],
+        "intrinsics": [[900, 0, 640], [0, 910, 360], [0, 0, 1]],
+        "width": 1280,
+        "height": 720,
+    }
+    second = {**real, "image_id": 45, "image_name": "frame_000062.png", "cam2world": [[1, 0, 0, 6], [0, 1, 0, 7], [0, 0, 1, 8], [0, 0, 0, 1]]}
+    timeline = [
+        {"source_frame_index": 60, "selected_order": 0, "registration_status": "registered", "colmap_image_id": 44, "camera": real},
+        {"source_frame_index": 61, "selected_order": 1, "registration_status": "unregistered", "colmap_image_id": None, "camera": None},
+        {"source_frame_index": 62, "selected_order": 2, "registration_status": "registered", "colmap_image_id": 45, "camera": second},
+    ]
+    scene = load_viewer_scene(bundle, ply, points, timeline)
+    assert scene.camera_count == 2
+    assert scene.cameras[0]["colmap_image_id"] == 44
+    assert scene.cameras[0]["source_frame_index"] == 60
+    assert scene.cameras[0]["coordinate_space"] == "scene_normalized"
+    assert scene.cameras[0]["colmap_cam2world"][0][3] == 3
+    assert scene.cameras[0]["cam2world"][0][3] == 0
+    assert scene.camera_positions == ((0.0, 0.0, 0.0), (1.0, 2.0, 3.0))
+
+
 def test_viewer_reports_load_failure_for_mismatched_artifacts(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud):
     bundle, _, points, _ = _scene(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud)
     other = gaussian_factory(3, count=2)
@@ -73,3 +99,11 @@ def test_gaussian_activation_rejects_zero_quaternion():
             np.zeros((1, 1), dtype=np.float32),
             np.zeros((1, 4), dtype=np.float32),
         )
+
+
+def test_web_viewer_exposes_real_camera_and_free_view_bridge() -> None:
+    html = (Path(__file__).parents[2] / "apps" / "desktop" / "viewer_web" / "index.html").read_text(encoding="utf-8")
+    assert "window.viewerCamera={setCamera:setCameraByImageId,setFreeView:freeView" in html
+    assert "cameraProjection(currentCamera)" in html
+    assert "currentCamera.width/currentCamera.height" in html
+    assert "highlightCamera(rec)" in html

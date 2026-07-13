@@ -28,6 +28,20 @@ ApplicationWindow {
     property var draftSampling: importDraft.sampling || ({})
     property bool easyPending: false
     property bool acceptanceProPending: false
+    property string timelineFilter: "All"
+    property real timelineScale: 1.0
+    property int viewerPlayhead: 0
+    property string timelineMessage: ""
+    property string timelinePreviewSource: ""
+    readonly property var viewerTimelineModel: {
+        var rows = sampling.timeline || []
+        if (timelineFilter === "Selected") return rows.filter(function(x) { return x.selection_status === "selected" || x.status === "selected" })
+        if (timelineFilter === "Rejected") return rows.filter(function(x) { return x.selection_status === "rejected" || x.status === "rejected" })
+        if (timelineFilter === "Candidate") return rows.filter(function(x) { return !!x.candidate })
+        if (timelineFilter === "Registered") return rows.filter(function(x) { return x.registration_status === "registered" })
+        if (timelineFilter === "Unregistered") return rows.filter(function(x) { return x.registration_status === "unregistered" })
+        return rows
+    }
     property bool logsOpen: true
     readonly property color panel: "#1a1f27"
     readonly property color line: "#303845"
@@ -41,6 +55,7 @@ ApplicationWindow {
         if (status === "failed") return "#ef6b73"
         if (status === "interrupted") return "#e5ad55"
         if (status === "fallback_required") return "#e5ad55"
+        if (status === "stale") return "#c38bdb"
         return "#687587"
     }
     function stageState(name) { return (current.stages || {})[name] || {"status":"pending"} }
@@ -53,10 +68,24 @@ ApplicationWindow {
         backend.configureVideoImport(samplingModeId(proSamplingMode.currentIndex), proTarget.value,
             proInterval.value, proIntervalUnit.currentText, proIn.value, proOut.value, proProfile.currentText)
     }
+    function activateViewerFrame(position) {
+        var rows = viewerTimelineModel
+        if (!rows.length) return
+        viewerPlayhead = Math.max(0, Math.min(rows.length - 1, position))
+        var frame = rows[viewerPlayhead]
+        timelinePreviewSource = fileUrl(frame.extracted_image_path || frame.thumbnail_path)
+        viewerTimeline.positionViewAtIndex(viewerPlayhead, ListView.Contain)
+        if (frame.registration_status === "registered" && frame.colmap_image_id !== null && !sampling.camera_mapping_stale) {
+            timelineMessage = ""
+            viewer.runJavaScript("viewerCamera.setCamera(" + Number(frame.colmap_image_id) + ")")
+        } else {
+            timelineMessage = frame.selection_status === "selected" || frame.status === "selected" ? "No reconstructed camera" : (frame.reason || "Rejected frame · no reconstructed camera")
+        }
+    }
 
     Connections {
         target: backend
-        function onChanged() { current = JSON.parse(backend.currentJson || "{}") }
+        function onChanged() { current = JSON.parse(backend.currentJson || "{}"); viewerPlayhead = 0 }
         function onImportChanged() {
             importDraft = JSON.parse(backend.importJson || "{}")
             if (easyPending && importDraft.status === "ready" && (importDraft.sampling || {}).analysis_status === "complete") {
@@ -77,9 +106,21 @@ ApplicationWindow {
             }
         }
         function onAcceptanceRequested() {
-            viewer.runJavaScript("var before=acceptance.snapshot(); acceptance.orbit(0.03,-0.01); acceptance.pan(0.005,-0.003); acceptance.zoom(0.98); acceptance.walk(0.005); acceptance.motionTest(1800); JSON.stringify({before:before,after:acceptance.snapshot()})", function(result) { backend.viewerAcceptanceResult(result) })
+            if (backend.acceptanceCameraTimeline) {
+                timelineFilter = "Registered"
+                viewerFilter.currentIndex = 4
+                viewerPlayhead = 0
+                Qt.callLater(function() {
+                    activateViewerFrame(0)
+                    viewerPlayback.start()
+                    viewer.runJavaScript("JSON.stringify(viewerCamera.state())", function(result) { backend.viewerAcceptanceResult(result) })
+                })
+            } else {
+                viewer.runJavaScript("var before=acceptance.snapshot(); acceptance.orbit(0.03,-0.01); acceptance.pan(0.005,-0.003); acceptance.zoom(0.98); acceptance.walk(0.005); acceptance.motionTest(1800); JSON.stringify({before:before,after:acceptance.snapshot()})", function(result) { backend.viewerAcceptanceResult(result) })
+            }
         }
     }
+    Timer { id: viewerPlayback; interval: 650; repeat: true; onTriggered: { if (viewerPlayhead + 1 >= viewerTimelineModel.length) stop(); else activateViewerFrame(viewerPlayhead + 1) } }
     Timer { id: acceptancePauseTimer; interval: 700; repeat: false; onTriggered: { proPlayer.position = 1000; proPlayer.pause() } }
     FileDialog {
         id: inputPicker; title: "Import video"
@@ -294,17 +335,66 @@ ApplicationWindow {
 
             Rectangle {
                 SplitView.fillWidth: true; SplitView.minimumWidth: 560; color: "#0f1319"
-                WebEngineView { id: viewer; objectName: "gaussianViewer"; anchors.fill: parent; url: backend ? backend.viewerUrl : "about:blank"; focus: true; onTitleChanged: { if (backend) backend.viewerPageTitle(title) } }
-                Column {
-                    anchors.centerIn: parent; spacing: 10; visible: !backend || backend.viewerUrl === "about:blank"
-                    Label { anchors.horizontalCenter: parent.horizontalCenter; text: current.project_id ? "3D VIEWER" : "NO PROJECT SELECTED"; font.pixelSize: 19; font.bold: true; color: "#cad3df" }
-                    Label { width: 440; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: muted; text: backend ? backend.viewerStatus : "" }
-                    Button { anchors.horizontalCenter: parent.horizontalCenter; visible: stageState("validate").status === "succeeded"; text: "Reload Viewer"; onClicked: backend.loadViewer() }
-                }
-                Rectangle {
-                    anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-                    height: 27; color: "#141921e8"
-                    Label { anchors.fill: parent; anchors.leftMargin: 9; verticalAlignment: Text.AlignVCenter; color: muted; elide: Text.ElideRight; text: backend ? backend.viewerStatus : "" }
+                ColumnLayout {
+                    anchors.fill: parent; spacing: 0
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.fillHeight: true; color: "#0f1319"
+                        WebEngineView { id: viewer; objectName: "gaussianViewer"; anchors.fill: parent; url: backend ? backend.viewerUrl : "about:blank"; focus: true; onTitleChanged: { if (backend) backend.viewerPageTitle(title) } }
+                        Column {
+                            anchors.centerIn: parent; spacing: 10; visible: !backend || backend.viewerUrl === "about:blank"
+                            Label { anchors.horizontalCenter: parent.horizontalCenter; text: current.project_id ? "3D VIEWER" : "NO PROJECT SELECTED"; font.pixelSize: 19; font.bold: true; color: "#cad3df" }
+                            Label { width: 440; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; color: muted; text: backend ? backend.viewerStatus : "" }
+                            Button { anchors.horizontalCenter: parent.horizontalCenter; visible: stageState("validate").status === "succeeded"; text: "Reload Viewer"; onClicked: backend.loadViewer() }
+                        }
+                        Rectangle {
+                            anchors.fill: parent; visible: timelineMessage !== ""; color: "#0d1117ed"
+                            ColumnLayout { anchors.centerIn: parent; width: Math.min(parent.width - 60, 720); height: Math.min(parent.height - 50, 480)
+                                Image { Layout.fillWidth: true; Layout.fillHeight: true; source: timelinePreviewSource; fillMode: Image.PreserveAspectFit; asynchronous: true }
+                                Label { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: timelineMessage; color: "#e5ad55"; font.pixelSize: 16; font.bold: true }
+                            }
+                        }
+                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 27; color: "#141921e8"
+                            Label { anchors.fill: parent; anchors.leftMargin: 9; verticalAlignment: Text.AlignVCenter; color: muted; elide: Text.ElideRight; text: backend ? backend.viewerStatus : "" }
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.preferredHeight: current.input_kind === "video" ? 190 : 0
+                        visible: current.input_kind === "video"; color: "#151a22"; border.color: line
+                        ColumnLayout { anchors.fill: parent; anchors.margins: 7; spacing: 5
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: "KEYFRAME CAMERA TIMELINE"; font.bold: true; font.pixelSize: 11 }
+                                Label { text: "In #" + (sampling.in_frame || 0) + " · Out #" + (sampling.out_frame === undefined ? "—" : sampling.out_frame); color: muted }
+                                ToolButton { text: "Prev"; enabled: viewerTimelineModel.length > 0; onClicked: activateViewerFrame(viewerPlayhead - 1) }
+                                ToolButton { text: viewerPlayback.running ? "Pause" : "Play"; enabled: viewerTimelineModel.length > 0; onClicked: viewerPlayback.running ? viewerPlayback.stop() : viewerPlayback.start() }
+                                ToolButton { text: "Next"; enabled: viewerTimelineModel.length > 0; onClicked: activateViewerFrame(viewerPlayhead + 1) }
+                                Button { text: "Camera View"; enabled: viewerTimelineModel.length > 0 && !sampling.camera_mapping_stale; onClicked: activateViewerFrame(viewerPlayhead) }
+                                Button { text: "Free View"; enabled: backend && backend.viewerUrl !== "about:blank"; onClicked: { timelineMessage = ""; viewer.runJavaScript("viewerCamera.setFreeView()") } }
+                                Item { Layout.fillWidth: true }
+                                ComboBox { id: viewerFilter; model: ["All", "Selected", "Rejected", "Candidate", "Registered", "Unregistered"]; onActivated: { timelineFilter = currentText; viewerPlayhead = 0 } }
+                                Label { text: "Zoom"; color: muted }
+                                Slider { from: 0.7; to: 1.7; value: 1.0; Layout.preferredWidth: 100; onMoved: timelineScale = value }
+                            }
+                            ListView {
+                                id: viewerTimeline; Layout.fillWidth: true; Layout.fillHeight: true; orientation: ListView.Horizontal
+                                model: viewerTimelineModel; spacing: 6; clip: true; boundsBehavior: Flickable.StopAtBounds
+                                delegate: Rectangle {
+                                    required property var modelData; required property int index
+                                    width: 110 * timelineScale; height: viewerTimeline.height; radius: 4; color: "#10151c"
+                                    border.width: index === viewerPlayhead ? 3 : 2
+                                    border.color: index === viewerPlayhead ? accent : modelData.registration_status === "registered" ? "#54c88a" : modelData.selection_status === "selected" || modelData.status === "selected" ? "#e5ad55" : modelData.candidate ? "#7289b5" : "#596474"
+                                    Rectangle { anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.horizontalCenter: parent.horizontalCenter; width: 2; color: accent; visible: index === viewerPlayhead; z: 2 }
+                                    Image { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: parent.height - 40; source: fileUrl(modelData.extracted_image_path || modelData.thumbnail_path); fillMode: Image.PreserveAspectCrop; asynchronous: true }
+                                    Column { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 39
+                                        Label { width: parent.width; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 9; text: "#" + (modelData.source_frame_index === undefined ? modelData.index : modelData.source_frame_index) + " · " + Number(modelData.timestamp_seconds).toFixed(2) + "s" }
+                                        Label { width: parent.width; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 9; color: modelData.registration_status === "registered" ? "#54c88a" : muted; text: (modelData.selection_status || modelData.status || "frame") + (modelData.candidate ? " · candidate" : "") + (modelData.registration_status && modelData.registration_status !== "not_applicable" ? " · " + modelData.registration_status : "") }
+                                    }
+                                    MouseArea { id: viewerThumbMouse; anchors.fill: parent; hoverEnabled: true; onClicked: activateViewerFrame(index) }
+                                    ToolTip.visible: viewerThumbMouse.containsMouse; ToolTip.text: modelData.reason || (modelData.registration_status === "unregistered" ? "No reconstructed camera" : modelData.registration_status || modelData.status)
+                                }
+                                Label { anchors.centerIn: parent; visible: viewerTimeline.count === 0; text: sampling.camera_mapping_stale ? "Timeline is stale · regenerate to rebuild cameras" : "No frames match this filter"; color: muted }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -328,8 +418,8 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video" && samplingMode.currentIndex === 1
                             Label { text: "Final frames"; color: muted; Layout.fillWidth: true }
-                            SpinBox { id: targetFrames; from: 1; to: Math.max(1, sampling.source_total_frames || 1); value: Math.min(to, sampling.requested_frame_count || 1); editable: true }
-                            Label { text: "/ " + (sampling.source_total_frames || 0); color: muted }
+                            SpinBox { id: targetFrames; from: 1; to: Math.max(1, sampling.trimmed_frame_count || sampling.source_total_frames || 1); value: Math.min(to, sampling.requested_frame_count || 1); editable: true }
+                            Label { text: "/ " + (sampling.trimmed_frame_count || sampling.source_total_frames || 0); color: muted }
                         }
                         RowLayout {
                             Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video" && samplingMode.currentIndex === 2
@@ -339,15 +429,22 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video"
+                            Label { text: "In"; color: muted }
+                            SpinBox { id: persistedIn; from: 0; to: Math.max(0, persistedOut.value); value: sampling.in_frame || 0; editable: true; Layout.fillWidth: true }
+                            Label { text: "Out"; color: muted }
+                            SpinBox { id: persistedOut; from: persistedIn.value; to: Math.max(0, (sampling.source_total_frames || 1) - 1); value: sampling.out_frame === undefined ? to : sampling.out_frame; editable: true; Layout.fillWidth: true }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: current.input_kind === "video"
                             Button {
                                 text: "Apply"; enabled: current.status !== "running"
-                                onClicked: backend.setSampling(samplingModeId(samplingMode.currentIndex), targetFrames.value, intervalValue.value, intervalUnit.currentText)
+                                onClicked: backend.setSampling(samplingModeId(samplingMode.currentIndex), targetFrames.value, intervalValue.value, intervalUnit.currentText, persistedIn.value, persistedOut.value)
                             }
                             Button {
                                 text: sampling.analysis_status === "analyzing" ? "Analyzing…" : "Reanalyze"; Layout.fillWidth: true
                                 enabled: current.status !== "running" && sampling.analysis_status !== "analyzing"
                                 onClicked: {
-                                    backend.setSampling(samplingModeId(samplingMode.currentIndex), targetFrames.value, intervalValue.value, intervalUnit.currentText)
+                                    backend.setSampling(samplingModeId(samplingMode.currentIndex), targetFrames.value, intervalValue.value, intervalUnit.currentText, persistedIn.value, persistedOut.value)
                                     backend.analyzeSampling()
                                 }
                             }
@@ -363,20 +460,6 @@ ApplicationWindow {
                         }
                         Label { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; wrapMode: Text.Wrap; color: sampling.warnings && sampling.warnings.length ? "#e5ad55" : muted; visible: current.input_kind === "video"; text: sampling.warnings && sampling.warnings.length ? sampling.warnings.join("\n") : (sampling.advisory || "Import a video to estimate frame cost.") }
                         Label { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; color: muted; visible: current.input_kind === "video"; text: "Estimate: " + (sampling.estimated_minutes || "—") + " min · " + (sampling.estimated_vram_gib || "—") + " GiB VRAM" }
-                        Label { text: "KEYFRAME TIMELINE"; color: muted; font.bold: true; font.pixelSize: 10; Layout.leftMargin: 12; visible: current.input_kind === "video" }
-                        ListView {
-                            id: timeline; Layout.fillWidth: true; Layout.preferredHeight: 78; Layout.leftMargin: 12; Layout.rightMargin: 12
-                            orientation: ListView.Horizontal; spacing: 5; clip: true; model: sampling.timeline || []; visible: current.input_kind === "video"
-                            delegate: Rectangle {
-                                required property var modelData
-                                width: 72; height: 72; radius: 3; color: "#11151b"
-                                border.width: 2; border.color: modelData.status === "selected" ? "#54c88a" : "#596474"
-                                Image { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 48; source: fileUrl(modelData.thumbnail_path); fillMode: Image.PreserveAspectCrop; asynchronous: true }
-                                Label { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 21; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 9; color: modelData.status === "selected" ? "#54c88a" : muted; text: (modelData.status === "selected" ? "Selected " : "Rejected ") + Number(modelData.timestamp_seconds).toFixed(1) + "s" }
-                                ToolTip.visible: timelineMouse.containsMouse; ToolTip.text: modelData.reason || modelData.status
-                                MouseArea { id: timelineMouse; anchors.fill: parent; hoverEnabled: true }
-                            }
-                        }
                         Rectangle { Layout.fillWidth: true; height: 1; color: line }
                         Label { text: "QUALITY & STATUS"; color: muted; font.bold: true; font.pixelSize: 11; Layout.leftMargin: 12 }
                         GridLayout {

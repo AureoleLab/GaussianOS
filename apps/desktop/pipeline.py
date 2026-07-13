@@ -27,6 +27,7 @@ from packages.pipeline import CancellationToken, SubprocessWorkerRunner
 from packages.plugin_sdk import ExecutionProfile, PluginManifest, StageKind, StageRequest, StageStatus
 
 from .project_store import Project, ProjectStore, ProjectStoreError, StageState
+from .camera_timeline import build_camera_timeline
 from .sampling import (
     SamplingConfig,
     VideoProbe,
@@ -98,6 +99,15 @@ class PipelineController:
         """Control-plane-only project creation entry point for the GUI."""
         return self.store.create(name, project_root)
 
+    @staticmethod
+    def _mark_outputs_stale(project: Project, reason: str) -> None:
+        for state in project.stages.values():
+            if state.status not in {"pending", "running"}:
+                state.status = "stale"
+                state.error = reason
+        project.sampling["camera_mapping_stale"] = True
+        project.run_id = None
+
     def import_input(self, project_id: str, source: str | Path) -> Project:
         source = Path(source).resolve()
         if not source.exists():
@@ -157,8 +167,7 @@ class PipelineController:
                 raise RuntimeError("cannot change input while a pipeline is running")
             project.input_path, project.input_kind, project.status = str(source), kind, "ready"
             project.sampling = sampling
-            project.stages = {}
-            project.run_id = None
+            self._mark_outputs_stale(project, "Input or sampling configuration changed")
         project, _ = self.store.update_project(project_id, apply)
         return project
 
@@ -171,7 +180,11 @@ class PipelineController:
             project.profile = profile
             if project.input_kind == "video" and project.sampling and not project.sampling.get("manual_override", False):
                 probe = self._probe_from_project(project)
-                config = SamplingConfig(profile=profile)
+                config = SamplingConfig(
+                    profile=profile,
+                    in_frame=int(project.sampling.get("in_frame", 0)),
+                    out_frame=int(project.sampling["out_frame"]) if project.sampling.get("out_frame") is not None else None,
+                )
                 estimate = estimate_sampling(probe, config)
                 project.sampling.update({
                     "sampling_mode": "auto",
@@ -186,8 +199,7 @@ class PipelineController:
                     "timeline": [],
                     **estimate,
                 })
-                project.stages = {}
-                project.run_id = None
+                self._mark_outputs_stale(project, "Profile changed automatic frame selection")
             elif project.input_kind == "video" and project.sampling:
                 probe = self._probe_from_project(project)
                 config = SamplingConfig(
@@ -197,6 +209,8 @@ class PipelineController:
                     interval_unit=str(project.sampling.get("interval_unit", "seconds")),
                     profile=profile,
                     manual_override=True,
+                    in_frame=int(project.sampling.get("in_frame", 0)),
+                    out_frame=int(project.sampling["out_frame"]) if project.sampling.get("out_frame") is not None else None,
                 )
                 estimate = estimate_sampling(probe, config)
                 project.sampling.update({
@@ -208,8 +222,7 @@ class PipelineController:
                     "timeline": [],
                     **estimate,
                 })
-                project.stages = {}
-                project.run_id = None
+                self._mark_outputs_stale(project, "Profile changed reconstruction outputs")
         project, _ = self.store.update_project(project_id, apply)
         return project
 
@@ -291,8 +304,7 @@ class PipelineController:
                 "trimmed_frame_count": estimate["trimmed_frame_count"],
                 **estimate,
             })
-            project.stages = {}
-            project.run_id = None
+            self._mark_outputs_stale(project, "Trim or sampling configuration changed")
             project.status = "ready"
         project, _ = self.store.update_project(project_id, apply)
         return project
@@ -327,8 +339,7 @@ class PipelineController:
             project.input_kind = "video"
             project.profile = profile
             project.sampling = durable
-            project.stages = {}
-            project.run_id = None
+            self._mark_outputs_stale(project, "Video import configuration changed")
             project.status = "ready"
             project.current_stage = None
 
@@ -556,6 +567,9 @@ class PipelineController:
                 "selected_frame_indices",
                 "rejected_frame_indices",
                 "selection_config_hash",
+                "in_frame",
+                "out_frame",
+                "trimmed_frame_count",
             )
             if key in project.sampling
         }
@@ -645,11 +659,15 @@ class PipelineController:
             "source_total_frames", "sampling_mode", "requested_frame_count",
             "candidate_frame_count", "selected_frame_count", "selected_frame_indices",
             "rejected_frame_indices", "selection_config_hash",
+            "in_frame", "out_frame", "trimmed_frame_count",
         )
         sampling_provenance = {key: deepcopy(project.sampling.get(key)) for key in provenance_keys if key in project.sampling}
         dataset = {"schema_version": "desktop-dataset/v1", "dataset_id": project.project_id, "sampling_provenance": sampling_provenance, "scenes": [{"scene_id": "scene", "source": {"file_name": Path(project.input_path or "input").name, "sha256": self._sha256(Path(project.input_path)) if Path(project.input_path or "").is_file() else "0" * 64}, "frames": records}]}
         (destination / "dataset.manifest.json").write_text(json.dumps(dataset, indent=2) + "\n", encoding="utf-8")
         (destination / "sampling.provenance.json").write_text(json.dumps(sampling_provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        project.sampling["camera_timeline"] = build_camera_timeline(project.sampling, images, sparse)
+        project.sampling["camera_mapping_stale"] = False
+        self._persist(project)
         return destination
 
     def _train(self, project: Project, data_dir: Path, token: CancellationToken, event: Callable[[str, str, dict[str, Any]], None] | None) -> Path:
@@ -709,6 +727,7 @@ class PipelineController:
                 "source_total_frames", "sampling_mode", "requested_frame_count",
                 "candidate_frame_count", "selected_frame_count", "selected_frame_indices",
                 "rejected_frame_indices", "selection_config_hash",
+                "in_frame", "out_frame", "trimmed_frame_count",
             )
             sampling_provenance = {key: deepcopy(project.sampling.get(key)) for key in provenance_keys if key in project.sampling}
             (exported_bundle / "sampling.provenance.json").write_text(

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw, ImageFilter
 
-from apps.desktop.project_store import ProjectStore
+from apps.desktop.project_store import ProjectStore, StageState
 from apps.desktop.pipeline import PipelineController
 from apps.desktop.sampling import (
     FrameScore,
@@ -126,6 +126,45 @@ def test_controller_custom_sampling_persists_and_rejects_more_than_source(tmp_pa
     assert restored.sampling["selection_config_hash"] == updated.sampling["selection_config_hash"]
     with pytest.raises(ValueError, match="exceeds source total"):
         controller.set_sampling_config(project.project_id, "target_count", 151, 1.0, "seconds")
+
+
+def test_sampling_change_marks_every_downstream_artifact_stale(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("stale", tmp_path / "work")
+    project.input_kind = "video"; project.input_path = str(tmp_path / "source.mp4"); project.status = "succeeded"
+    project.sampling = {
+        "source_total_frames": 154, "duration_seconds": 2.57, "fps": 60.0,
+        "width": 1920, "height": 1080, "sampling_mode": "target_count",
+        "requested_frame_count": 60, "interval_value": 1.0, "interval_unit": "seconds",
+        "manual_override": True,
+    }
+    for name in ("ingest", "colmap", "train", "validate", "export"):
+        project.stages[name] = StageState(status="succeeded", artifact_paths=[str(tmp_path / name)])
+    store.save(project)
+    controller = PipelineController(store, tmp_path / "artifacts")
+    updated = controller.set_sampling_config(project.project_id, "target_count", 45, 1.0, "seconds", 5, 120)
+    assert updated.sampling["camera_mapping_stale"] is True
+    assert updated.sampling["trimmed_frame_count"] == 116
+    assert all(state.status == "stale" for state in updated.stages.values())
+    assert updated.stages["export"].artifact_paths == [str(tmp_path / "export")]
+
+
+def test_profile_change_preserves_trimmed_range(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("trim profile", tmp_path / "work")
+    project.input_kind = "video"; project.input_path = str(tmp_path / "source.mp4"); project.status = "ready"
+    project.sampling = {
+        "source_total_frames": 154, "duration_seconds": 2.57, "fps": 60.0,
+        "width": 1920, "height": 1080, "sampling_mode": "auto",
+        "requested_frame_count": 24, "interval_value": 1.0, "interval_unit": "seconds",
+        "manual_override": False, "in_frame": 10, "out_frame": 109,
+    }
+    store.save(project)
+    updated = PipelineController(store, tmp_path / "artifacts").set_profile(project.project_id, "quality")
+    assert updated.sampling["in_frame"] == 10
+    assert updated.sampling["out_frame"] == 109
+    assert updated.sampling["trimmed_frame_count"] == 100
+
 
 
 @pytest.fixture(scope="module")

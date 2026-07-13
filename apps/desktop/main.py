@@ -39,6 +39,9 @@ def project_view(project: Project) -> dict[str, Any]:
         int(ingest.get("metrics", {}).get("frame_count", 0))
         if ingest.get("status") == "succeeded" else 0
     )
+    sampling = value.setdefault("sampling", {})
+    if sampling.get("camera_timeline"):
+        sampling["timeline"] = sampling["camera_timeline"]
     return value
 
 
@@ -65,6 +68,7 @@ def main() -> int:
     parser.add_argument("--acceptance-delay-ms", type=int, default=12_000, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-import-video", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-import-pro", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-camera-timeline", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     scheme = QWebEngineUrlScheme(b"gaussian")
     scheme.setSyntax(QWebEngineUrlScheme.Syntax.HostAndPort)
@@ -126,6 +130,7 @@ def main() -> int:
                     "artifact": scene.gaussian_path.name,
                     "gaussian_count": scene.gaussian_count,
                     "camera_positions": scene.camera_positions,
+                    "cameras": scene.cameras,
                     "bounds_min": scene.bounds_min,
                     "bounds_max": scene.bounds_max,
                     "has_pointcloud": scene.pointcloud_path is not None,
@@ -200,6 +205,10 @@ def main() -> int:
         @Property(str, notify=importChanged)
         def importJson(self) -> str:
             return json.dumps(self.import_state, ensure_ascii=False)
+
+        @Property(bool, constant=True)
+        def acceptanceCameraTimeline(self) -> bool:
+            return bool(args.acceptance_camera_timeline)
 
         @Slot(str)
         def beginVideoImport(self, source: str) -> None:
@@ -351,15 +360,14 @@ def main() -> int:
                     self.logs.append(f"Profile update failed: {exc}")
             self._refresh()
 
-        @Slot(str, int, float, str)
-        def setSampling(self, mode: str, requested: int, interval_value: float, interval_unit: str) -> None:
+        @Slot(str, int, float, str, int, int)
+        def setSampling(self, mode: str, requested: int, interval_value: float, interval_unit: str, in_frame: int, out_frame: int) -> None:
             project = self._project()
             if project is None: return
             try:
                 controller.set_sampling_config(
                     project.project_id, mode, requested, interval_value, interval_unit,
-                    int(project.sampling.get("in_frame", 0)),
-                    int(project.sampling["out_frame"]) if project.sampling.get("out_frame") is not None else None,
+                    in_frame, out_frame,
                 )
                 self.logs.append(f"Sampling set to {mode}; configuration is Custom")
             except Exception as exc:
@@ -415,7 +423,10 @@ def main() -> int:
                 self.viewerStatusChanged.emit()
                 def load() -> None:
                     try:
-                        scene = load_viewer_scene(bundle, gaussian, pointcloud)
+                        timeline = project.sampling.get("camera_timeline", [])
+                        if project.sampling.get("camera_mapping_stale"):
+                            timeline = []
+                        scene = load_viewer_scene(bundle, gaussian, pointcloud, timeline)
                         self.event.emit("viewer_ready", "Viewer artifact validated", {"scene": scene})
                     except Exception as exc:
                         self.event.emit("viewer_failed", str(exc), {})
