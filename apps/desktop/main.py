@@ -69,7 +69,13 @@ def main() -> int:
     parser.add_argument("--acceptance-import-video", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-import-pro", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-camera-timeline", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--doctor", action="store_true", help="check the portable runtime without starting the GUI")
     args = parser.parse_args()
+    if args.doctor:
+        from .portable import doctor
+        messages = doctor()
+        print("GaussianOS runtime doctor: " + ("OK" if not messages else "\n- " + "\n- ".join(messages)))
+        return 0 if not messages else 2
     scheme = QWebEngineUrlScheme(b"gaussian")
     scheme.setSyntax(QWebEngineUrlScheme.Syntax.HostAndPort)
     scheme.setDefaultPort(80)

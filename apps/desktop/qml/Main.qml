@@ -62,6 +62,13 @@ ApplicationWindow {
     function samplingModeId(index) { return ["auto", "target_count", "interval", "all_frames"][index] }
     function samplingModeIndex(mode) { return Math.max(0, ["auto", "target_count", "interval", "all_frames"].indexOf(mode || "auto")) }
     function fileUrl(path) { return path ? "file:///" + path.replace(/\\/g, "/") : "" }
+    function localPathFromUrl(value) {
+        if (value && typeof value.toLocalFile === "function") return value.toLocalFile()
+        var text = value && typeof value.toString === "function" ? value.toString() : String(value || "")
+        if (/^file:\/\/\//i.test(text)) text = text.substring(8)
+        else if (/^file:\/\//i.test(text)) text = "//" + text.substring(7)
+        try { return decodeURIComponent(text) } catch (error) { return text }
+    }
     function beginVideo(path) { backend.beginVideoImport(path); modeDialog.open() }
     function openProAcceptance(path) { acceptanceProPending = true; backend.beginVideoImport(path) }
     function applyProDraft() {
@@ -125,9 +132,9 @@ ApplicationWindow {
     FileDialog {
         id: inputPicker; title: "Import video"
         nameFilters: ["Video files (*.mp4 *.mov *.mkv *.avi *.webm)", "All files (*)"]
-        onAccepted: beginVideo(selectedFile.toLocalFile())
+        onAccepted: beginVideo(localPathFromUrl(selectedFile))
     }
-    FolderDialog { id: folderPicker; title: "Import image folder"; onAccepted: backend.importInput(selectedFolder.toLocalFile()) }
+    FolderDialog { id: folderPicker; title: "Import image folder"; onAccepted: backend.importInput(localPathFromUrl(selectedFolder)) }
     Dialog {
         id: projectDialog; title: "New project"; modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
@@ -259,7 +266,7 @@ ApplicationWindow {
         keys: ["text/uri-list"]
         onDropped: function(drop) {
             if (drop.hasUrls && drop.urls.length > 0) {
-                var path = drop.urls[0].toLocalFile()
+                var path = localPathFromUrl(drop.urls[0])
                 if (/\.(mp4|mov|mkv|avi|webm)$/i.test(path)) {
                     drop.acceptProposedAction()
                     beginVideo(path)

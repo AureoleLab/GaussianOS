@@ -67,8 +67,13 @@ class RuntimePaths:
 
     @classmethod
     def discover(cls) -> "RuntimePaths":
-        factory = ROOT / ".gaussian-factory"
-        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+        # A frozen portable build keeps every mutable dependency beside the
+        # executable.  Source/developer runs preserve the historic local
+        # location.  This must not fall back to user-profile caches.
+        portable_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None
+        factory = (portable_root / "runtime") if portable_root else (ROOT / ".gaussian-factory")
+        bundled_ffmpeg = factory / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+        ffmpeg = str(bundled_ffmpeg) if bundled_ffmpeg.is_file() else (shutil.which("ffmpeg") or "ffmpeg")
         return cls(
             colmap=factory / "tools" / "colmap" / "3.13.0" / "bin" / "colmap.exe",
             ffmpeg=ffmpeg,
@@ -79,7 +84,7 @@ class RuntimePaths:
             map_checkpoint=factory / "downloads" / "map-anything-apache-00f9c245" / "model.safetensors",
             map_config=factory / "downloads" / "map-anything-apache-00f9c245" / "config.json",
             dino_source=factory / "sources" / "dinov2-7764ea0",
-            dino_checkpoint=Path.home() / ".cache" / "torch" / "hub" / "checkpoints" / "dinov2_vitg14_pretrain.pth",
+            dino_checkpoint=factory / "downloads" / "dinov2-7764ea0" / "dinov2_vitg14_pretrain.pth",
         )
 
 

@@ -8,6 +8,7 @@ htmlcov/
 .mypy_cache/
 dist/
 build/
+release/
 *.egg-info/
 
 # P1 runtime products are reproducible and must not be committed.
@@ -18,3 +19,29 @@ benchmark_runs/
 # Keep local source media out of Git.
 testvid/
 tests/USER_TEST/
+
+# Portable runtime and all user-generated project data must remain local.
+runtime/
+*.part
+*.log
+*.tmp
+*.pdb
+*.ply
+*.scene-bundle/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.mp4
+*.mov
+*.avi
+.env
+.env.*
+
+# The runtime manifest is source-controlled; release binaries remain ignored.
+!dist/
+dist/*
+!dist/runtime-manifest.json
+
+# Local Windows release artefacts; never commit package contents or model data.
+便携包/

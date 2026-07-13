@@ -107,3 +107,12 @@ def test_web_viewer_exposes_real_camera_and_free_view_bridge() -> None:
     assert "cameraProjection(currentCamera)" in html
     assert "currentCamera.width/currentCamera.height" in html
     assert "highlightCamera(rec)" in html
+
+
+def test_qml_file_urls_support_string_drop_payloads() -> None:
+    qml = (Path(__file__).parents[2] / "apps" / "desktop" / "qml" / "Main.qml").read_text(encoding="utf-8")
+    assert "function localPathFromUrl(value)" in qml
+    assert "localPathFromUrl(drop.urls[0])" in qml
+    assert "localPathFromUrl(selectedFile)" in qml
+    assert "drop.urls[0].toLocalFile()" not in qml
+    assert "selectedFile.toLocalFile()" not in qml

@@ -20,7 +20,7 @@ The prepared local dataset is outside Git at
 ## Commands already run
 
 ```powershell
-uv run python -m benchmarks.prepare_dataset I:\GaussianOS\testvid I:\GaussianOS\benchmark_runs\p1_dataset_v1 --fps 15 --holdout-stride 8 --holdout-offset 4
+uv run python -m benchmarks.prepare_dataset <local-video-directory> <local-output-directory> --fps 15 --holdout-stride 8 --holdout-offset 4
 python benchmarks/probe_environment.py --input-dir testvid --dataset-manifest benchmark_runs/p1_dataset_v1/dataset.manifest.json --colmap .gaussian-factory/tools/colmap/3.13.0/bin/colmap.exe --output benchmarks/evidence/p1_environment.json
 ```
 

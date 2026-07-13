@@ -1,0 +1,16 @@
+name: Bug report
+description: Report a reproducible GaussianOS problem
+labels: [bug, alpha]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Do not include project media, credentials, or private paths.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: GaussianOS version
+  - type: input
+    attributes:
+      label: GPU and driver
