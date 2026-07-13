@@ -17,8 +17,10 @@ jobs:
       - name: Basic repository secret check
         run: |
           $matches = git grep -n -I -E 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN( RSA)? PRIVATE KEY-----'
-          if ($LASTEXITCODE -eq 0) { $matches; throw 'Potential secret found in tracked files.' }
-          if ($LASTEXITCODE -gt 1) { throw 'git grep failed.' }
+          $grepExit = $LASTEXITCODE
+          if ($grepExit -eq 0) { $matches; throw 'Potential secret found in tracked files.' }
+          if ($grepExit -gt 1) { throw 'git grep failed.' }
+          exit 0
       - name: Unit and contract tests
         env:
           QT_QPA_PLATFORM: offscreen
