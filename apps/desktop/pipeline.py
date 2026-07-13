@@ -237,6 +237,8 @@ class PipelineController:
             interval_unit=str(sampling.get("interval_unit", "seconds")),
             profile=project.profile,
             manual_override=bool(sampling.get("manual_override", False)),
+            in_frame=int(sampling.get("in_frame", 0)),
+            out_frame=int(sampling["out_frame"]) if sampling.get("out_frame") is not None else None,
         )
 
     def set_sampling_config(
@@ -246,6 +248,8 @@ class PipelineController:
         requested_frame_count: int,
         interval_value: float,
         interval_unit: str,
+        in_frame: int = 0,
+        out_frame: int | None = None,
     ) -> Project:
         snapshot = self.store.load(project_id)
         if snapshot.input_kind != "video":
@@ -258,6 +262,8 @@ class PipelineController:
             interval_unit=interval_unit,
             profile=snapshot.profile,
             manual_override=True,
+            in_frame=in_frame,
+            out_frame=out_frame,
         )
         validate_config(probe, config)
         estimate = estimate_sampling(probe, config)
@@ -280,11 +286,52 @@ class PipelineController:
                 "analysis_status": "pending",
                 "timeline": [],
                 "warnings": [],
+                "in_frame": estimate["in_frame"],
+                "out_frame": estimate["out_frame"],
+                "trimmed_frame_count": estimate["trimmed_frame_count"],
                 **estimate,
             })
             project.stages = {}
             project.run_id = None
             project.status = "ready"
+        project, _ = self.store.update_project(project_id, apply)
+        return project
+
+    def commit_video_import(
+        self,
+        project_id: str,
+        source: str | Path,
+        profile: str,
+        sampling: dict[str, Any],
+    ) -> Project:
+        """Atomically make an analyzed transient import a durable project input."""
+        source_path = Path(source).resolve()
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path)
+        if sampling.get("analysis_status") != "complete":
+            raise ValueError("Generate requires completed video analysis")
+        analysis_dir = Path(self.store.load(project_id).root) / "inputs" / "analysis"
+        analysis_dir.mkdir(parents=True, exist_ok=True)
+        durable = deepcopy(sampling)
+        for record in durable.get("timeline", []):
+            thumbnail = Path(str(record.get("thumbnail_path", "")))
+            if thumbnail.is_file():
+                destination = analysis_dir / thumbnail.name
+                shutil.copy2(thumbnail, destination)
+                record["thumbnail_path"] = str(destination)
+
+        def apply(project: Project) -> None:
+            if project.status == "running":
+                raise RuntimeError("cannot replace input while a pipeline is running")
+            project.input_path = str(source_path)
+            project.input_kind = "video"
+            project.profile = profile
+            project.sampling = durable
+            project.stages = {}
+            project.run_id = None
+            project.status = "ready"
+            project.current_stage = None
+
         project, _ = self.store.update_project(project_id, apply)
         return project
 

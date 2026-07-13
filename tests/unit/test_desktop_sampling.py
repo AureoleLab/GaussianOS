@@ -19,6 +19,7 @@ from apps.desktop.sampling import (
     probe_video,
     select_frames,
 )
+from apps.desktop.video_import import VideoImportSession
 
 
 def _scores(count: int = 150) -> list[FrameScore]:
@@ -177,3 +178,64 @@ def test_real_150_frame_video_probe_analysis_and_colmap_directory_count(syntheti
     assert len(list((tmp_path / "colmap-input").glob("frame_*.png"))) == result["selected_frame_count"]
     assert [int(path.stem.rsplit("_", 1)[1]) for path in extracted] == selected
     assert result["candidate_frame_count"] >= result["selected_frame_count"] * 2
+
+
+def test_trimmed_target_uses_source_indices_and_exact_count(synthetic_video: Path, tmp_path: Path) -> None:
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    ffprobe = shutil.which("ffprobe") or "ffprobe"
+    probe = probe_video(synthetic_video, ffprobe)
+    result = analyze_video(
+        synthetic_video,
+        probe,
+        SamplingConfig(mode="target_count", requested_frame_count=60, in_frame=10, out_frame=129),
+        ffmpeg,
+        tmp_path / "trimmed-analysis",
+    )
+    assert result["source_total_frames"] == 150
+    assert result["trimmed_frame_count"] == 120
+    assert result["selected_frame_count"] == 60
+    assert min(result["selected_frame_indices"]) >= 10
+    assert max(result["selected_frame_indices"]) <= 129
+    assert all(10 <= item["index"] <= 129 for item in result["timeline"])
+
+
+def test_transient_import_cancel_removes_analysis_without_project_state(
+    synthetic_video: Path, tmp_path: Path,
+) -> None:
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    ffprobe = shutil.which("ffprobe") or "ffprobe"
+    session = VideoImportSession(synthetic_video, ffmpeg, ffprobe)
+    root = session.analysis_dir.parent
+    snapshot = session.configure("target_count", 60, 1.0, "seconds", 0, 149, "quality")
+    assert snapshot["source_total_frames"] == 150
+    assert snapshot["requested_frame_count"] == 60
+    assert snapshot["analysis_status"] == "pending"
+    session.cancel()
+    assert not root.exists()
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_generate_commits_analyzed_draft_and_trim_state(
+    synthetic_video: Path, tmp_path: Path,
+) -> None:
+    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    ffprobe = shutil.which("ffprobe") or "ffprobe"
+    probe = probe_video(synthetic_video, ffprobe)
+    analyzed = analyze_video(
+        synthetic_video,
+        probe,
+        SamplingConfig(mode="target_count", requested_frame_count=15, in_frame=5, out_frame=104),
+        ffmpeg,
+        tmp_path / "draft-analysis",
+    )
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("draft", tmp_path / "workspace")
+    controller = PipelineController(store, tmp_path / "artifacts")
+    committed = controller.commit_video_import(project.project_id, synthetic_video, "quality", analyzed)
+    restored = store.load(project.project_id)
+    assert committed.status == "ready"
+    assert restored.profile == "quality"
+    assert restored.sampling["in_frame"] == 5
+    assert restored.sampling["out_frame"] == 104
+    assert restored.sampling["selected_frame_count"] == 15
+    assert all(Path(item["thumbnail_path"]).parent == tmp_path / "workspace" / "inputs" / "analysis" for item in restored.sampling["timeline"])

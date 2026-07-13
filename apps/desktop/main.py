@@ -10,12 +10,15 @@ import argparse
 import json
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .pipeline import PipelineController, STAGES, TERMINAL_STAGE_STATES
 from .project_store import Project, ProjectStore
 from .viewer import ViewerScene, load_viewer_scene
+from .sampling import discover_ffprobe
+from .video_import import VideoImportSession
 
 
 def project_view(project: Project) -> dict[str, Any]:
@@ -59,6 +62,9 @@ def main() -> int:
     parser.add_argument("--projects", type=Path, default=Path.home() / ".gaussian-factory" / "projects")
     parser.add_argument("--artifacts", type=Path, default=Path.home() / ".gaussian-factory" / "artifact-store")
     parser.add_argument("--acceptance-evidence", type=Path, help="capture a real rendered GUI after exercising viewer controls")
+    parser.add_argument("--acceptance-delay-ms", type=int, default=12_000, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-import-video", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-import-pro", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     scheme = QWebEngineUrlScheme(b"gaussian")
     scheme.setSyntax(QWebEngineUrlScheme.Syntax.HostAndPort)
@@ -139,6 +145,7 @@ def main() -> int:
 
     class Backend(QObject):
         changed = Signal()
+        importChanged = Signal()
         viewerUrlChanged = Signal()
         viewerStatusChanged = Signal()
         event = Signal(str, str, object)
@@ -155,6 +162,10 @@ def main() -> int:
             self.persistence_failed: set[str] = set()
             self.acceptance_started = False
             self.sampling_analysis: set[str] = set()
+            self.import_session: VideoImportSession | None = None
+            self.import_state: dict[str, Any] = {}
+            self.import_analysis_running = False
+            self.import_generation = 0
 
         def _project(self) -> Project | None:
             try: return store.load(self.selected) if self.selected else None
@@ -185,6 +196,111 @@ def main() -> int:
 
         @Property(str, notify=viewerStatusChanged)
         def viewerStatus(self) -> str: return self.viewer_status
+
+        @Property(str, notify=importChanged)
+        def importJson(self) -> str:
+            return json.dumps(self.import_state, ensure_ascii=False)
+
+        @Slot(str)
+        def beginVideoImport(self, source: str) -> None:
+            self.import_generation += 1
+            generation = self.import_generation
+            if self.import_session is not None:
+                self.import_session.cancel()
+            self.import_session = None
+            self.import_state = {"source": source, "status": "preflight", "sampling": {}}
+            self.importChanged.emit()
+
+            def preflight() -> None:
+                try:
+                    session = VideoImportSession(
+                        source,
+                        controller.runtime.ffmpeg,
+                        discover_ffprobe(controller.runtime.ffmpeg),
+                    )
+                    self.event.emit("import_preflight_ready", "Video preflight completed", {"session": session, "generation": generation})
+                except Exception as exc:
+                    self.event.emit("import_preflight_failed", str(exc), {})
+
+            threading.Thread(target=preflight, name="video-import-preflight", daemon=True).start()
+
+        @Slot(str, int, float, str, int, int, str)
+        def configureVideoImport(
+            self, mode: str, requested: int, interval_value: float,
+            interval_unit: str, in_frame: int, out_frame: int, profile: str,
+        ) -> None:
+            session = self.import_session
+            if session is None:
+                return
+            try:
+                sampling = session.configure(
+                    mode, requested, interval_value, interval_unit,
+                    in_frame, out_frame, profile,
+                )
+            except Exception as exc:
+                self.import_state["error"] = str(exc)
+                self.importChanged.emit()
+                return
+            self.import_state.update({"profile": profile, "sampling": sampling, "status": "analyzing"})
+            self.import_state.pop("error", None)
+            self.importChanged.emit()
+            if self.import_analysis_running:
+                return
+            self.import_analysis_running = True
+
+            def analyze_latest() -> None:
+                while self.import_session is session and not session.cancelled:
+                    try:
+                        analyzed = session.analyze()
+                    except InterruptedError:
+                        continue
+                    except Exception as exc:
+                        self.event.emit("import_analysis_failed", str(exc), {})
+                        return
+                    self.event.emit("import_analysis_ready", "Video analysis completed", {"sampling": analyzed})
+                    return
+
+            threading.Thread(target=analyze_latest, name="video-import-analysis", daemon=True).start()
+
+        @Slot()
+        def cancelVideoImport(self) -> None:
+            self.import_generation += 1
+            if self.import_session is not None:
+                self.import_session.cancel()
+            self.import_session = None
+            self.import_state = {}
+            self.import_analysis_running = False
+            self.importChanged.emit()
+
+        @Slot()
+        def generateVideoImport(self) -> None:
+            session = self.import_session
+            if session is None or session.sampling.get("analysis_status") != "complete":
+                self.import_state["error"] = "Generate waits for the current analysis to complete"
+                self.importChanged.emit()
+                return
+            project = self._project()
+            if project is None:
+                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                root = args.projects.resolve().parent / "workspaces" / f"{session.source.stem}-{stamp}"
+                project = controller.create_project(session.source.stem, root)
+            try:
+                committed = controller.commit_video_import(
+                    project.project_id, session.source,
+                    str(self.import_state.get("profile", session.profile)), session.snapshot(),
+                )
+            except Exception as exc:
+                self.import_state["error"] = str(exc)
+                self.importChanged.emit()
+                return
+            self.selected = committed.project_id
+            session.cancel()
+            self.import_session = None
+            self.import_state = {}
+            self.import_analysis_running = False
+            self.importChanged.emit()
+            self._refresh()
+            self.start()
 
         @staticmethod
         def _decorate(project: Project) -> dict[str, Any]:
@@ -240,7 +356,11 @@ def main() -> int:
             project = self._project()
             if project is None: return
             try:
-                controller.set_sampling_config(project.project_id, mode, requested, interval_value, interval_unit)
+                controller.set_sampling_config(
+                    project.project_id, mode, requested, interval_value, interval_unit,
+                    int(project.sampling.get("in_frame", 0)),
+                    int(project.sampling["out_frame"]) if project.sampling.get("out_frame") is not None else None,
+                )
                 self.logs.append(f"Sampling set to {mode}; configuration is Custom")
             except Exception as exc:
                 self.logs.append(f"Sampling update failed: {exc}")
@@ -369,6 +489,29 @@ def main() -> int:
             elif kind in {"sampling_ready", "sampling_failed"} and isinstance(payload, dict):
                 project_id = payload.get("project_id")
                 if isinstance(project_id, str): self.sampling_analysis.discard(project_id)
+            elif kind == "import_preflight_ready" and isinstance(payload, dict):
+                session = payload.get("session")
+                if payload.get("generation") != self.import_generation:
+                    if isinstance(session, VideoImportSession):
+                        session.cancel()
+                elif isinstance(session, VideoImportSession):
+                    self.import_session = session
+                    self.import_state.update({
+                        "source": str(session.source), "status": "ready",
+                        "profile": session.profile, "sampling": session.snapshot(),
+                    })
+                    self.importChanged.emit()
+            elif kind == "import_preflight_failed":
+                self.import_state.update({"status": "failed", "error": message})
+                self.importChanged.emit()
+            elif kind == "import_analysis_ready" and isinstance(payload, dict):
+                self.import_analysis_running = False
+                self.import_state.update({"status": "ready", "sampling": payload.get("sampling", {})})
+                self.importChanged.emit()
+            elif kind == "import_analysis_failed":
+                self.import_analysis_running = False
+                self.import_state.update({"status": "failed", "error": message})
+                self.importChanged.emit()
             self._refresh()
 
     QQuickWebEngineProfile.defaultProfile().installUrlSchemeHandler(b"gaussian", viewer_handler)
@@ -383,6 +526,10 @@ def main() -> int:
     if not engine.rootObjects(): return 2
     if backend.selected:
         backend.loadViewer()
+    if args.acceptance_import_video:
+        root = engine.rootObjects()[0]
+        method = root.openProAcceptance if args.acceptance_import_pro else root.beginVideo
+        QTimer.singleShot(250, lambda: method(str(args.acceptance_import_video.resolve())))
     if args.acceptance_evidence:
         def acceptance_deadline() -> None:
             destination = args.acceptance_evidence.resolve()
@@ -390,7 +537,7 @@ def main() -> int:
             root = engine.rootObjects()[0]
             root.grabWindow().save(str(destination))
             app.quit()
-        QTimer.singleShot(12_000, acceptance_deadline)
+        QTimer.singleShot(max(1_000, args.acceptance_delay_ms), acceptance_deadline)
     return app.exec()
 
 

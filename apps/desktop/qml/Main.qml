@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtWebEngine
+import QtMultimedia
 
 ApplicationWindow {
     id: window
@@ -23,6 +24,10 @@ ApplicationWindow {
 
     property var current: JSON.parse(backend ? (backend.currentJson || "{}") : "{}")
     property var sampling: current.sampling || ({})
+    property var importDraft: JSON.parse(backend ? (backend.importJson || "{}") : "{}")
+    property var draftSampling: importDraft.sampling || ({})
+    property bool easyPending: false
+    property bool acceptanceProPending: false
     property bool logsOpen: true
     readonly property color panel: "#1a1f27"
     readonly property color line: "#303845"
@@ -42,18 +47,44 @@ ApplicationWindow {
     function samplingModeId(index) { return ["auto", "target_count", "interval", "all_frames"][index] }
     function samplingModeIndex(mode) { return Math.max(0, ["auto", "target_count", "interval", "all_frames"].indexOf(mode || "auto")) }
     function fileUrl(path) { return path ? "file:///" + path.replace(/\\/g, "/") : "" }
+    function beginVideo(path) { backend.beginVideoImport(path); modeDialog.open() }
+    function openProAcceptance(path) { acceptanceProPending = true; backend.beginVideoImport(path) }
+    function applyProDraft() {
+        backend.configureVideoImport(samplingModeId(proSamplingMode.currentIndex), proTarget.value,
+            proInterval.value, proIntervalUnit.currentText, proIn.value, proOut.value, proProfile.currentText)
+    }
 
     Connections {
         target: backend
         function onChanged() { current = JSON.parse(backend.currentJson || "{}") }
+        function onImportChanged() {
+            importDraft = JSON.parse(backend.importJson || "{}")
+            if (easyPending && importDraft.status === "ready" && (importDraft.sampling || {}).analysis_status === "complete") {
+                easyPending = false
+                easyDialog.close()
+                backend.generateVideoImport()
+            }
+            if (acceptanceProPending && importDraft.status === "ready") {
+                acceptanceProPending = false
+                proDialog.open()
+                proSamplingMode.currentIndex = 1
+                proTarget.value = Math.min(60, draftSampling.source_total_frames)
+                proIn.value = 0
+                proOut.value = draftSampling.source_total_frames - 1
+                applyProDraft()
+                proPlayer.play()
+                acceptancePauseTimer.start()
+            }
+        }
         function onAcceptanceRequested() {
             viewer.runJavaScript("var before=acceptance.snapshot(); acceptance.orbit(0.03,-0.01); acceptance.pan(0.005,-0.003); acceptance.zoom(0.98); acceptance.walk(0.005); acceptance.motionTest(1800); JSON.stringify({before:before,after:acceptance.snapshot()})", function(result) { backend.viewerAcceptanceResult(result) })
         }
     }
+    Timer { id: acceptancePauseTimer; interval: 700; repeat: false; onTriggered: { proPlayer.position = 1000; proPlayer.pause() } }
     FileDialog {
         id: inputPicker; title: "Import video"
         nameFilters: ["Video files (*.mp4 *.mov *.mkv *.avi *.webm)", "All files (*)"]
-        onAccepted: backend.importInput(selectedFile.toLocalFile())
+        onAccepted: beginVideo(selectedFile.toLocalFile())
     }
     FolderDialog { id: folderPicker; title: "Import image folder"; onAccepted: backend.importInput(selectedFolder.toLocalFile()) }
     Dialog {
@@ -70,8 +101,135 @@ ApplicationWindow {
         onAccepted: backend.createProject(projectName.text, projectRoot.text)
     }
     Dialog {
+        id: modeDialog; title: "Import video"; modal: true; width: 520
+        closePolicy: Popup.NoAutoClose
+        contentItem: ColumnLayout {
+            spacing: 14
+            Label { Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted; text: importDraft.status === "preflight" ? "Reading real video metadata…" : (importDraft.error || "Choose the workflow. Preflight has not created a project or job.") }
+            RowLayout {
+                Layout.fillWidth: true
+                Button { text: "Easy Mode"; Layout.fillWidth: true; enabled: importDraft.status === "ready"; onClicked: { modeDialog.close(); easyDialog.open() } }
+                Button { text: "Pro Mode"; Layout.fillWidth: true; enabled: importDraft.status === "ready"; onClicked: { modeDialog.close(); proDialog.open(); proPlayer.play() } }
+                Button { text: "Cancel"; onClicked: { backend.cancelVideoImport(); modeDialog.close() } }
+            }
+        }
+    }
+    Dialog {
+        id: easyDialog; title: "Easy Mode"; modal: true; width: 600
+        closePolicy: Popup.NoAutoClose
+        contentItem: ColumnLayout {
+            spacing: 12
+            Label { text: "Choose one quality target"; font.pixelSize: 18; font.bold: true }
+            Label { Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted; text: easyPending ? "Analyzing and selecting keyframes. The pipeline will start automatically." : "Everything else uses the existing automatic sampling logic." }
+            RowLayout {
+                enabled: !easyPending; Layout.fillWidth: true
+                Repeater {
+                    model: ["preview", "balanced", "quality"]
+                    Button { required property string modelData; text: modelData.charAt(0).toUpperCase() + modelData.slice(1); Layout.fillWidth: true; onClicked: { easyPending = true; backend.configureVideoImport("auto", 0, 1, "seconds", 0, draftSampling.source_total_frames - 1, modelData) } }
+                }
+            }
+            ProgressBar { Layout.fillWidth: true; indeterminate: easyPending }
+            Button { text: "Cancel"; Layout.alignment: Qt.AlignRight; onClicked: { easyPending = false; backend.cancelVideoImport(); easyDialog.close() } }
+        }
+    }
+    Dialog {
+        id: proDialog; title: "Pro Mode · Video Import"; modal: true; width: Math.min(window.width - 50, 1240); height: Math.min(window.height - 70, 800)
+        closePolicy: Popup.NoAutoClose
+        MediaPlayer { id: proPlayer; source: fileUrl(importDraft.source); videoOutput: proVideo }
+        contentItem: RowLayout {
+            spacing: 12
+            ColumnLayout {
+                Layout.fillWidth: true; Layout.fillHeight: true
+                Rectangle {
+                    Layout.fillWidth: true; Layout.fillHeight: true; color: "#080b10"; border.color: line
+                    VideoOutput { id: proVideo; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit }
+                    Label { anchors.centerIn: parent; visible: proPlayer.mediaStatus === MediaPlayer.LoadingMedia; text: "Loading preview…" }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ToolButton { text: proPlayer.playbackState === MediaPlayer.PlayingState ? "Pause" : "Play"; onClicked: proPlayer.playbackState === MediaPlayer.PlayingState ? proPlayer.pause() : proPlayer.play() }
+                    ToolButton { text: "Prev"; onClicked: proPlayer.position = Math.max(proIn.value * 1000 / draftSampling.fps, proPlayer.position - 1000 / draftSampling.fps) }
+                    ToolButton { text: "Next"; onClicked: proPlayer.position = Math.min(proOut.value * 1000 / draftSampling.fps, proPlayer.position + 1000 / draftSampling.fps) }
+                    Slider { Layout.fillWidth: true; from: 0; to: Math.max(1, proPlayer.duration); value: proPlayer.position; onMoved: proPlayer.position = value }
+                    Label { text: Math.min(Math.max(0, (draftSampling.source_total_frames || 1) - 1), Math.round(proPlayer.position / 1000 * (draftSampling.fps || 0))) + " / " + (draftSampling.source_total_frames || "—") }
+                }
+                ListView {
+                    id: proTimeline; Layout.fillWidth: true; Layout.preferredHeight: 112; orientation: ListView.Horizontal; spacing: 6; clip: true
+                    model: draftSampling.timeline || []
+                    delegate: Rectangle {
+                        required property var modelData; width: 104; height: 104; color: "#11151b"; radius: 4
+                        border.width: 2; border.color: modelData.status === "selected" ? "#54c88a" : modelData.candidate ? "#e5ad55" : "#596474"
+                        Image { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 72; source: fileUrl(modelData.thumbnail_path); fillMode: Image.PreserveAspectCrop; asynchronous: true }
+                        Label { anchors.bottom: parent.bottom; width: parent.width; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 10; text: "#" + modelData.index + " · " + Number(modelData.timestamp_seconds).toFixed(2) + "s"; color: modelData.status === "selected" ? "#54c88a" : muted }
+                        MouseArea { id: proThumbMouse; anchors.fill: parent; hoverEnabled: true; onClicked: proPlayer.position = modelData.timestamp_seconds * 1000 }
+                        ToolTip.visible: proThumbMouse.containsMouse; ToolTip.text: modelData.reason || modelData.status
+                    }
+                }
+            }
+            Rectangle {
+                Layout.preferredWidth: 290; Layout.fillHeight: true; color: panel; border.color: line
+                ScrollView { anchors.fill: parent; contentWidth: availableWidth
+                    ColumnLayout { width: parent.width; spacing: 10
+                        Label { text: "SAMPLING"; color: muted; font.bold: true; Layout.margins: 12 }
+                        ComboBox { id: proProfile; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; model: ["preview", "balanced", "quality"]; currentIndex: 1 }
+                        ComboBox { id: proSamplingMode; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; model: ["Auto", "Target Count", "Interval", "All Frames"]; currentIndex: samplingModeIndex(draftSampling.sampling_mode) }
+                        RowLayout { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: proSamplingMode.currentIndex === 1
+                            Label { text: "Requested"; Layout.fillWidth: true; color: muted }
+                            SpinBox { id: proTarget; from: 1; to: Math.max(1, (proOut.value - proIn.value + 1)); value: Math.min(to, draftSampling.requested_frame_count || 1); editable: true }
+                        }
+                        RowLayout { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; visible: proSamplingMode.currentIndex === 2
+                            SpinBox { id: proInterval; from: 1; to: 600; value: 1; editable: true; Layout.fillWidth: true }
+                            ComboBox { id: proIntervalUnit; model: ["frames", "seconds"]; Layout.fillWidth: true }
+                        }
+                        RowLayout { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12
+                            Label { text: "In"; color: muted } SpinBox { id: proIn; from: 0; to: Math.max(0, proOut.value); value: draftSampling.in_frame || 0; editable: true; Layout.fillWidth: true }
+                        }
+                        RowLayout { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12
+                            Label { text: "Out"; color: muted } SpinBox { id: proOut; from: proIn.value; to: Math.max(0, (draftSampling.source_total_frames || 1) - 1); value: draftSampling.out_frame === undefined ? to : draftSampling.out_frame; editable: true; Layout.fillWidth: true }
+                        }
+                        Button { text: importDraft.status === "analyzing" ? "Analyzing…" : "Analyze"; enabled: importDraft.status !== "analyzing"; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; onClicked: applyProDraft() }
+                        GridLayout { columns: 2; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; rowSpacing: 5
+                            Label { text: "Source"; color: muted } Label { text: (draftSampling.source_total_frames || "—") + " frames"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "Trimmed"; color: muted } Label { text: draftSampling.trimmed_frame_count || "—"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "Candidates"; color: muted } Label { text: draftSampling.candidate_frame_count || draftSampling.estimated_candidate_count || "—"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "Requested"; color: muted } Label { text: draftSampling.requested_frame_count || "—"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "Selected"; color: muted } Label { text: draftSampling.selected_frame_count || "—"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "Estimate"; color: muted } Label { text: (draftSampling.estimated_minutes || "—") + " min"; Layout.alignment: Qt.AlignRight }
+                            Label { text: "VRAM"; color: muted } Label { text: (draftSampling.estimated_vram_gib || "—") + " GiB"; Layout.alignment: Qt.AlignRight }
+                        }
+                        Label { Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; wrapMode: Text.Wrap; color: importDraft.error ? "#ef6b73" : muted; text: importDraft.error || draftSampling.advisory || "Preflight ready" }
+                        Item { Layout.fillHeight: true }
+                        RowLayout { Layout.fillWidth: true; Layout.margins: 12
+                            Button { text: "Cancel"; onClicked: { proPlayer.stop(); backend.cancelVideoImport(); proDialog.close() } }
+                            Button { text: "Generate"; highlighted: true; Layout.fillWidth: true; enabled: draftSampling.analysis_status === "complete" && importDraft.status === "ready"; onClicked: { proPlayer.stop(); proDialog.close(); backend.generateVideoImport() } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Dialog {
         id: settingsDialog; title: "Settings"; modal: true; standardButtons: Dialog.Close; width: 500
         contentItem: Label { width: 460; text: "Runtime paths are discovered from the locked P2 environment.\nRenderer: Qt WebEngine · WebGL2"; padding: 18 }
+    }
+
+    DropArea {
+        id: globalVideoDrop; anchors.fill: parent; z: 1000
+        keys: ["text/uri-list"]
+        onDropped: function(drop) {
+            if (drop.hasUrls && drop.urls.length > 0) {
+                var path = drop.urls[0].toLocalFile()
+                if (/\.(mp4|mov|mkv|avi|webm)$/i.test(path)) {
+                    drop.acceptProposedAction()
+                    beginVideo(path)
+                }
+            }
+        }
+        Rectangle {
+            anchors.fill: parent; visible: globalVideoDrop.containsDrag
+            color: "#172b48e8"; border.width: 3; border.color: accent
+            Label { anchors.centerIn: parent; text: "DROP VIDEO\nEasy or Pro import"; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 28; font.bold: true; color: "white" }
+        }
     }
 
     header: Rectangle {
@@ -81,7 +239,7 @@ ApplicationWindow {
             Label { text: "GF"; font.bold: true; font.pixelSize: 17; color: accent }
             Label { text: "Gaussian Factory"; font.bold: true; font.pixelSize: 15; Layout.rightMargin: 14 }
             ToolButton { text: "New Project"; onClicked: projectDialog.open() }
-            ToolButton { text: "Import Video"; enabled: !!current.project_id; onClicked: inputPicker.open() }
+            ToolButton { text: "Import Video"; onClicked: inputPicker.open() }
             ToolButton { text: "Import Images"; enabled: !!current.project_id; onClicked: folderPicker.open() }
             Rectangle { width: 1; height: 24; color: line; Layout.leftMargin: 4; Layout.rightMargin: 4 }
             Button { text: current.status === "interrupted" ? "Resume" : "Run"; enabled: !!current.input_path && current.status !== "running"; highlighted: true; onClicked: backend.start() }

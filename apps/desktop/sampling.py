@@ -17,7 +17,7 @@ import numpy as np
 from PIL import Image
 
 
-SAMPLING_VERSION = "p2.6-selection/v1"
+SAMPLING_VERSION = "p2.7-trimmed-selection/v1"
 SamplingMode = Literal["auto", "target_count", "interval", "all_frames"]
 IntervalUnit = Literal["frames", "seconds"]
 PROFILE_RATIOS = {"preview": 0.10, "balanced": 0.20, "quality": 0.40}
@@ -45,6 +45,8 @@ class SamplingConfig:
     interval_unit: IntervalUnit = "seconds"
     profile: str = "balanced"
     manual_override: bool = False
+    in_frame: int = 0
+    out_frame: int | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"auto", "target_count", "interval", "all_frames"}:
@@ -55,6 +57,10 @@ class SamplingConfig:
             raise ValueError(f"unsupported interval unit: {self.interval_unit}")
         if self.interval_value <= 0:
             raise ValueError("sampling interval must be positive")
+        if self.in_frame < 0:
+            raise ValueError("In frame must not be negative")
+        if self.out_frame is not None and self.out_frame < self.in_frame:
+            raise ValueError("Out frame must not precede In frame")
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -156,33 +162,47 @@ def default_auto_count(total_frames: int, profile: str) -> int:
     )
 
 
+def frame_range(probe: VideoProbe, config: SamplingConfig) -> tuple[int, int, int]:
+    """Return inclusive source In/Out and the number of usable source frames."""
+    start = config.in_frame
+    end = probe.total_frames - 1 if config.out_frame is None else config.out_frame
+    if start >= probe.total_frames or end >= probe.total_frames:
+        raise ValueError(
+            f"trim range {start}-{end} is outside source total {probe.total_frames}"
+        )
+    return start, end, end - start + 1
+
+
 def requested_count(probe: VideoProbe, config: SamplingConfig) -> int:
+    _, _, available = frame_range(probe, config)
     if config.mode == "all_frames":
-        return probe.total_frames
+        return available
     if config.mode == "target_count":
-        return int(config.requested_frame_count or default_auto_count(probe.total_frames, config.profile))
+        return int(config.requested_frame_count or default_auto_count(available, config.profile))
     if config.mode == "interval":
         step = config.interval_value if config.interval_unit == "frames" else config.interval_value * probe.fps
-        return max(1, int(math.ceil(probe.total_frames / max(step, 1.0))))
-    return default_auto_count(probe.total_frames, config.profile)
+        return max(1, int(math.ceil(available / max(step, 1.0))))
+    return default_auto_count(available, config.profile)
 
 
 def validate_config(probe: VideoProbe, config: SamplingConfig) -> None:
+    _, _, available = frame_range(probe, config)
     requested = requested_count(probe, config)
-    if requested > probe.total_frames:
-        raise ValueError(f"requested frame count {requested} exceeds source total {probe.total_frames}")
+    if requested > available:
+        raise ValueError(f"requested frame count {requested} exceeds source total after trim {available}")
     if config.mode == "target_count" and requested < 1:
         raise ValueError("target frame count must be positive")
 
 
 def estimate_sampling(probe: VideoProbe, config: SamplingConfig) -> dict[str, object]:
     validate_config(probe, config)
+    start, end, available = frame_range(probe, config)
     requested = requested_count(probe, config)
-    candidates = probe.total_frames if config.mode == "all_frames" else min(probe.total_frames, max(requested, int(math.ceil(requested * 2.5))))
+    candidates = available if config.mode == "all_frames" else min(available, max(requested, int(math.ceil(requested * 2.5))))
     risk = ""
     if requested < 12:
         risk = "High reconstruction-failure risk: fewer than 12 views may not provide enough overlap."
-    elif requested > max(120, int(probe.total_frames * 0.75)):
+    elif requested > max(120, int(available * 0.75)):
         risk = "High compute and redundancy: expect longer COLMAP matching, training, and increased VRAM use."
     elif config.mode == "all_frames":
         risk = "All frames keeps blur and near-duplicates; compute cost and redundancy can grow sharply."
@@ -193,6 +213,9 @@ def estimate_sampling(probe: VideoProbe, config: SamplingConfig) -> dict[str, ob
         "estimated_selected_count": requested,
         "estimated_minutes": round(estimated_minutes, 1),
         "estimated_vram_gib": round(estimated_vram_gib, 1),
+        "in_frame": start,
+        "out_frame": end,
+        "trimmed_frame_count": available,
         "advisory": risk or "Time coverage and quality filtering are expected to be balanced.",
     }
 
@@ -336,6 +359,7 @@ def analyze_video(
 ) -> dict[str, object]:
     """Decode every source frame at analysis resolution and select keyframes."""
     validate_config(probe, config)
+    range_start, range_end, range_count = frame_range(probe, config)
     root = Path(analysis_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
     for old in root.glob("thumb_*.jpg"):
         old.unlink(missing_ok=True)
@@ -346,7 +370,7 @@ def analyze_video(
     if process.stdout is None or process.stderr is None:
         raise RuntimeError("could not open FFmpeg analysis pipes")
     frame_bytes = analysis_width * analysis_height * 3
-    timeline_indices = set(np.linspace(0, probe.total_frames - 1, min(probe.total_frames, 240), dtype=np.int64).tolist())
+    timeline_indices = set(np.linspace(range_start, range_end, min(range_count, 240), dtype=np.int64).tolist())
     frames: list[FrameScore] = []
     previous_gray: np.ndarray | None = None
     previous_descriptor: np.ndarray | None = None
@@ -361,6 +385,10 @@ def analyze_video(
             if len(payload) != frame_bytes:
                 raise RuntimeError("FFmpeg returned a truncated analysis frame")
             rgb = np.frombuffer(payload, dtype=np.uint8).reshape(analysis_height, analysis_width, 3)
+            source_index = index
+            index += 1
+            if source_index < range_start or source_index > range_end:
+                continue
             gray = (rgb[..., 0].astype(np.float32) * 0.299 + rgb[..., 1] * 0.587 + rgb[..., 2] * 0.114) / 255.0
             laplacian = -4.0 * gray[1:-1, 1:-1] + gray[:-2, 1:-1] + gray[2:, 1:-1] + gray[1:-1, :-2] + gray[1:-1, 2:]
             sharpness = float(np.var(laplacian))
@@ -371,13 +399,12 @@ def analyze_video(
             descriptor = np.asarray(descriptor_image, dtype=np.float32).reshape(-1) / 255.0
             motion = difference if previous_descriptor is None else float(np.mean(np.abs(descriptor - previous_descriptor)))
             thumbnail = None
-            if index in timeline_indices:
-                thumbnail_path = root / f"thumb_{index:06d}.jpg"
+            if source_index in timeline_indices:
+                thumbnail_path = root / f"thumb_{source_index:06d}.jpg"
                 Image.fromarray(rgb, mode="RGB").save(thumbnail_path, quality=82)
                 thumbnail = str(thumbnail_path)
-            frames.append(FrameScore(index, index / probe.fps, sharpness, exposure, clipped, difference, motion, descriptor, thumbnail_path=thumbnail))
+            frames.append(FrameScore(source_index - range_start, source_index / probe.fps, sharpness, exposure, clipped, difference, motion, descriptor, thumbnail_path=thumbnail))
             previous_gray, previous_descriptor = gray, descriptor
-            index += 1
     finally:
         if process.poll() is None:
             process.stdout.close(); process.wait(timeout=30)
@@ -387,16 +414,33 @@ def analyze_video(
     if index != probe.total_frames:
         raise RuntimeError(f"decoded frame count {index} does not match probed source total {probe.total_frames}")
 
-    selected, candidates, candidate_goal, effective_requested, warnings = select_frames(frames, probe, config)
+    range_probe = VideoProbe(range_count, range_count / probe.fps, probe.fps, probe.width, probe.height)
+    range_config = SamplingConfig(
+        mode=config.mode,
+        requested_frame_count=config.requested_frame_count,
+        interval_value=config.interval_value,
+        interval_unit=config.interval_unit,
+        profile=config.profile,
+        manual_override=config.manual_override,
+    )
+    selected, candidates, candidate_goal, effective_requested, warnings = select_frames(frames, range_probe, range_config)
     selected_set, candidate_set = set(selected), set(candidates)
     rejected = [item.index for item in frames if item.index not in selected_set]
     timeline = [item.record(selected_set, candidate_set) for item in frames if item.thumbnail_path]
+    for item in timeline:
+        item["index"] = int(item["index"]) + range_start
+    selected = [value + range_start for value in selected]
+    candidates = [value + range_start for value in candidates]
+    rejected = [value + range_start for value in rejected]
     estimate = estimate_sampling(probe, config)
     if len(selected) < 12:
         warnings.append("Final frame count is below 12; reconstruction may fail from insufficient overlap.")
     return {
         **probe.to_dict(),
         "source_total_frames": probe.total_frames,
+        "in_frame": range_start,
+        "out_frame": range_end,
+        "trimmed_frame_count": range_count,
         "sampling_mode": config.mode,
         "requested_frame_count": effective_requested,
         "candidate_frame_count": len(candidates),
