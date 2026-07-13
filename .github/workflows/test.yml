@@ -5,8 +5,21 @@ on:
 jobs:
   unit:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync --extra test
-      - run: uv run pytest tests/unit tests/contract
+      - run: uv sync --extra test --extra compatibility --extra desktop
+      - name: Compile source
+        run: uv run python -m compileall -q apps packages workers
+      - name: Basic repository secret check
+        run: |
+          $matches = git grep -n -I -E 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN( RSA)? PRIVATE KEY-----'
+          if ($LASTEXITCODE -eq 0) { $matches; throw 'Potential secret found in tracked files.' }
+          if ($LASTEXITCODE -gt 1) { throw 'git grep failed.' }
+      - name: Unit and contract tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest tests/unit tests/contract
