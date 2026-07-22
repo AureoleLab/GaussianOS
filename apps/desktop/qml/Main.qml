@@ -704,6 +704,7 @@ ApplicationWindow {
                             Column {
                                 anchors.centerIn: parent; width: Math.min(620, parent.width - 60); spacing: 16
                                 Canvas {
+                                    id: welcomeCanvas
                                     width: 250; height: 205; anchors.horizontalCenter: parent.horizontalCenter
                                     onPaint: {
                                         var ctx = getContext("2d"); ctx.reset();
@@ -716,7 +717,7 @@ ApplicationWindow {
                                         var edge = theme.dark ? "rgba(210,210,210,.24)" : "rgba(70,70,70,.18)";
                                         cube(112,50,62,faint,edge); cube(112,102,62,faint,edge); cube(178,116,36,theme.dark?"rgba(127,149,181,.20)":"rgba(83,107,140,.13)",theme.accent);
                                     }
-                                    Connections { target: theme; function onDarkChanged() { parent.requestPaint() } }
+                                    Connections { target: theme; function onDarkChanged() { welcomeCanvas.requestPaint() } }
                                 }
                                 Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: current.project_id ? "Ready to reconstruct" : "Welcome to Gaussian Factory"; color: theme.text; font.pixelSize: theme.typeHero; font.weight: Font.DemiBold }
                                 Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; lineHeight: 1.45; text: current.project_id ? "Import video or images to begin a high-quality 3D Gaussian reconstruction." : "Create a new project or import footage to reconstruct high-quality 3D Gaussian artifacts."; color: theme.textSecondary; font.pixelSize: 14 }

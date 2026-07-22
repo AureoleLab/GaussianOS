@@ -76,3 +76,14 @@ def test_p29_refined_palette_is_neutral_and_accent_is_restrained() -> None:
     assert 'primaryControl: dark ? "#303030"' in tokens
     assert "shimmerBase" in tokens
     assert "shimmerHighlight" in tokens
+
+
+def test_p29_qml_scopes_and_repeated_combo_motion_are_explicit() -> None:
+    main = (QML / "Main.qml").read_text(encoding="utf-8")
+    combo = (QML / "GfComboBox.qml").read_text(encoding="utf-8")
+
+    assert "id: welcomeCanvas" in main
+    assert "welcomeCanvas.requestPaint()" in main
+    assert "required property int index" in combo
+    assert "onVisibleChanged" in combo
+    assert "menuOpenMotion.restart()" in combo

@@ -41,6 +41,7 @@ ComboBox {
     }
     delegate: ItemDelegate {
         required property var modelData
+        required property int index
         width: ListView.view.width
         height: tokens.controlHeight
         highlighted: control.highlightedIndex === index
@@ -54,16 +55,23 @@ ComboBox {
         background: Rectangle { color: highlighted ? tokens.selectionStrong : hovered ? tokens.controlHover : "transparent"; radius: tokens.radiusSmall }
     }
     popup: Popup {
+        id: menuPopup
         y: control.height + 3
         width: control.width
         implicitHeight: Math.min(contentItem.implicitHeight + 8, 280)
         padding: 4
         transformOrigin: Item.Top
-        enter: Transition {
-            ParallelAnimation {
-                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: tokens.motionFast; easing.type: Easing.OutCubic }
-                NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: tokens.motionNormal; easing.type: Easing.OutCubic }
+        onVisibleChanged: {
+            if (visible) {
+                opacity = 0
+                scale = 0.94
+                Qt.callLater(function() { if (menuPopup.visible) menuOpenMotion.restart() })
             }
+        }
+        ParallelAnimation {
+            id: menuOpenMotion
+            NumberAnimation { target: menuPopup; property: "opacity"; from: 0; to: 1; duration: tokens.motionNormal; easing.type: Easing.OutCubic }
+            NumberAnimation { target: menuPopup; property: "scale"; from: 0.94; to: 1; duration: tokens.motionSlow; easing.type: Easing.OutCubic }
         }
         exit: Transition {
             ParallelAnimation {
