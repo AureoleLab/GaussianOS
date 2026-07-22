@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+QML = Path(__file__).resolve().parents[2] / "apps" / "desktop" / "qml"
+
+
+def test_p29_design_tokens_cover_global_themes_and_states() -> None:
+    tokens = (QML / "DesignTokens.qml").read_text(encoding="utf-8")
+
+    assert 'mode: "light"' in tokens
+    assert 'mode === "dark"' in tokens
+    assert 'mode === "system"' in tokens
+    assert 'dark ? "#111111"' in tokens
+    for state in ("accentHover", "accentPressed", "textDisabled", "success", "warning", "error"):
+        assert f"property color {state}" in tokens
+    for duration in ("motionFast", "motionNormal", "motionSlow"):
+        assert f"property int {duration}" in tokens
+
+
+def test_p29_uses_one_theme_for_every_qml_surface() -> None:
+    main = (QML / "Main.qml").read_text(encoding="utf-8")
+
+    assert 'DesignTokens { id: theme; mode: window.themeMode }' in main
+    assert 'property string themeMode: "light"' in main
+    assert 'window.themeMode = "dark"' in main
+    assert 'window.themeMode = "system"' in main
+    assert "darkTokens" not in main
+    assert "forceDark" not in main
+
+
+def test_p29_preserves_frontend_backend_actions_and_viewer_identity() -> None:
+    main = (QML / "Main.qml").read_text(encoding="utf-8")
+    viewer = (QML.parent / "viewer_web" / "index.html").read_text(encoding="utf-8")
+
+    for action in (
+        "createProject", "selectProject", "beginVideoImport", "configureVideoImport",
+        "generateVideoImport", "cancelVideoImport", "importInput", "setProfile",
+        "setSampling", "analyzeSampling", "start", "cancel", "loadViewer",
+        "openExportFolder", "viewerPageTitle", "viewerAcceptanceResult",
+    ):
+        assert f"backend.{action}" in main
+    assert 'objectName: "gaussianViewer"' in main
+    assert "viewerCamera.setCamera" in main
+    assert "setFreeView" in viewer
+
+
+def test_p29_button_content_is_centered_in_a_stretched_control() -> None:
+    button = (QML / "GfButton.qml").read_text(encoding="utf-8")
+
+    assert "contentItem: Item" in button
+    assert "id: contentRow" in button
+    assert "anchors.centerIn: parent" in button
+    assert "Accessible.role: Accessible.Button" in button
