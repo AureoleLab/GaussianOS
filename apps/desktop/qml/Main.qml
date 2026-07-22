@@ -57,6 +57,14 @@ ApplicationWindow {
     property real welcomeLogSize: 138
     property real proInspectorSize: 370
     property real proTimelineSize: 196
+    property string proPreviewSource: ""
+    property real proPreviewPosition: 0
+    property bool proPreviewRestoring: false
+    property bool proHasVideoFrame: false
+    property bool proPreviewPriming: false
+    property real proPreviewTargetPosition: 0
+    property real proTimelineScroll: 0
+    property real viewerTimelineScroll: 0
     readonly property bool viewerActive: backend && backend.viewerUrl !== "about:blank"
     readonly property bool viewerLoading: backend && String(backend.viewerStatus || "").toLowerCase().indexOf("loading") >= 0
     readonly property string route: proDialog.opened ? "pro" : viewerActive ? "viewer" : "home"
@@ -90,8 +98,60 @@ ApplicationWindow {
         else if (/^file:\/\//i.test(text)) text = "//" + text.substring(7)
         try { return decodeURIComponent(text) } catch (error) { return text }
     }
-    function beginVideo(path) { backend.beginVideoImport(path); modeDialog.open() }
-    function openProAcceptance(path) { acceptanceProPending = true; backend.beginVideoImport(path) }
+    function prepareProSource(path) {
+        var normalized = String(path || "")
+        if (proPreviewSource !== normalized) {
+            proPreviewSource = normalized
+            proPreviewPosition = 0
+            proHasVideoFrame = false
+            proPreviewPriming = false
+            proTimelineScroll = 0
+            queueLayoutSave()
+        }
+    }
+    function restoreProPreview() {
+        if (!proPlayer || !importDraft.source) return
+        if (proPreviewPriming) return
+        proPlayer.pause()
+        proPreviewRestoring = true
+        var requested = proPreviewPosition > 0 ? proPreviewPosition : 1
+        proPreviewTargetPosition = Math.max(0, Math.min(requested, Math.max(1, proPlayer.duration)))
+        proPlayer.position = proPreviewTargetPosition
+        if (!proHasVideoFrame) {
+            proPreviewPriming = true
+            proPlayer.play()
+            previewPrimePause.restart()
+            return
+        }
+        Qt.callLater(function() { proPreviewRestoring = false })
+    }
+    function restoreTimelinePosition(list, savedPosition) {
+        if (!list) return
+        list.contentX = clampLayout(savedPosition, 0, Math.max(0, list.contentWidth - list.width))
+    }
+    function proPreviewThumbnail() {
+        var rows = draftSampling.timeline || []
+        if (!rows.length) return ""
+        var seconds = proPlayer.position / 1000
+        var nearest = rows[0]
+        var distance = Math.abs(Number(nearest.timestamp_seconds || 0) - seconds)
+        for (var index = 1; index < rows.length; ++index) {
+            var candidateDistance = Math.abs(Number(rows[index].timestamp_seconds || 0) - seconds)
+            if (candidateDistance < distance) { nearest = rows[index]; distance = candidateDistance }
+        }
+        return fileUrl(nearest.thumbnail_path || nearest.extracted_image_path)
+    }
+    function scrollTimelineByWheel(list, event) {
+        var delta = 0
+        if (event.pixelDelta && Math.abs(event.pixelDelta.x) > 0) delta = event.pixelDelta.x
+        else if (event.pixelDelta && Math.abs(event.pixelDelta.y) > 0) delta = event.pixelDelta.y
+        else if (event.angleDelta && Math.abs(event.angleDelta.x) > 0) delta = event.angleDelta.x / 120 * 72
+        else if (event.angleDelta) delta = event.angleDelta.y / 120 * 72
+        if (delta !== 0) list.contentX = clampLayout(list.contentX - delta, 0, Math.max(0, list.contentWidth - list.width))
+        event.accepted = true
+    }
+    function beginVideo(path) { prepareProSource(path); backend.beginVideoImport(path); modeDialog.open() }
+    function openProAcceptance(path) { prepareProSource(path); acceptanceProPending = true; backend.beginVideoImport(path) }
     function applyProDraft() {
         backend.configureVideoImport(samplingModeId(proSamplingMode.currentIndex), proTarget.value,
             proInterval.value, proIntervalUnit.currentText, proIn.value, proOut.value, proProfile.currentText)
@@ -143,6 +203,10 @@ ApplicationWindow {
         welcomeLogSize = clampLayout(state.welcomeLogSize || 138, 92, 300)
         proInspectorSize = clampLayout(state.proInspectorSize || 370, 310, 520)
         proTimelineSize = clampLayout(state.proTimelineSize || 196, 132, 360)
+        proPreviewSource = String(state.proPreviewSource || "")
+        proPreviewPosition = Math.max(0, Number(state.proPreviewPosition || 0))
+        proTimelineScroll = Math.max(0, Number(state.proTimelineScroll || 0))
+        viewerTimelineScroll = Math.max(0, Number(state.viewerTimelineScroll || 0))
     }
     function loadLayout() {
         try {
@@ -171,7 +235,11 @@ ApplicationWindow {
             "viewerTimelineSize": viewerTimelineSize,
             "welcomeLogSize": welcomeLogSize,
             "proInspectorSize": proInspectorSize,
-            "proTimelineSize": proTimelineSize
+            "proTimelineSize": proTimelineSize,
+            "proPreviewSource": proPreviewSource,
+            "proPreviewPosition": proPreviewPosition,
+            "proTimelineScroll": proTimelineScroll,
+            "viewerTimelineScroll": viewerTimelineScroll
         }
         try {
             var db = layoutDatabase()
@@ -209,8 +277,7 @@ ApplicationWindow {
                 proIn.value = 0
                 proOut.value = draftSampling.source_total_frames - 1
                 applyProDraft()
-                proPlayer.play()
-                acceptancePauseTimer.start()
+                Qt.callLater(restoreProPreview)
             }
         }
         function onAcceptanceRequested() {
@@ -230,7 +297,17 @@ ApplicationWindow {
     }
 
     Timer { id: viewerPlayback; interval: 650; repeat: true; onTriggered: viewerPlayhead + 1 >= viewerTimelineModel.length ? stop() : activateViewerFrame(viewerPlayhead + 1) }
-    Timer { id: acceptancePauseTimer; interval: 700; repeat: false; onTriggered: { proPlayer.position = 1000; proPlayer.pause() } }
+    Timer {
+        id: previewPrimePause
+        interval: 90; repeat: false
+        onTriggered: {
+            if (!proPreviewPriming) return
+            proPlayer.pause()
+            proPlayer.position = proPreviewTargetPosition
+            proPreviewPriming = false
+            proPreviewRestoring = false
+        }
+    }
     Timer { id: layoutSaveTimer; interval: 420; repeat: false; onTriggered: saveLayout() }
     Component.onCompleted: Qt.callLater(loadLayout)
     onClosing: saveLayout()
@@ -299,7 +376,7 @@ ApplicationWindow {
             RowLayout {
                 Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
                 GfButton { tokens: theme; text: "Easy Mode"; Layout.fillWidth: true; enabled: importDraft.status === "ready"; onClicked: { modeDialog.close(); easyDialog.open() } }
-                GfButton { tokens: theme; text: "Pro Mode"; primary: true; Layout.fillWidth: true; enabled: importDraft.status === "ready"; onClicked: { modeDialog.close(); proDialog.open(); proPlayer.play() } }
+                GfButton { tokens: theme; text: "Pro Mode"; primary: true; Layout.fillWidth: true; enabled: importDraft.status === "ready"; onClicked: { modeDialog.close(); proDialog.open() } }
             }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
             RowLayout { Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
@@ -383,10 +460,33 @@ ApplicationWindow {
         focus: true
         padding: 0
         closePolicy: Popup.NoAutoClose
+        onOpened: {
+            prepareProSource(importDraft.source)
+            restoreProPreview()
+            Qt.callLater(function() { restoreTimelinePosition(proTimeline, proTimelineScroll) })
+        }
         background: Rectangle { color: theme.background }
         enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: theme.motionNormal } }
         exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: theme.motionFast } }
-        MediaPlayer { id: proPlayer; source: fileUrl(importDraft.source); videoOutput: proVideo }
+        MediaPlayer {
+            id: proPlayer
+            source: fileUrl(importDraft.source)
+            videoOutput: proVideo
+            autoPlay: false
+            onMediaStatusChanged: {
+                if (mediaStatus === MediaPlayer.LoadedMedia || mediaStatus === MediaPlayer.BufferedMedia) Qt.callLater(restoreProPreview)
+            }
+            onPositionChanged: {
+                if (!proPreviewRestoring && !proPreviewPriming && importDraft.source) {
+                    proPreviewPosition = position
+                    queueLayoutSave()
+                }
+            }
+        }
+        Connections {
+            target: proVideo.videoSink
+            function onVideoFrameChanged(frame) { proHasVideoFrame = true }
+        }
 
         contentItem: ColumnLayout {
             spacing: 0
@@ -428,7 +528,8 @@ ApplicationWindow {
                     }
                     GfPanel {
                         tokens: theme; sunken: true; Layout.fillWidth: true; Layout.fillHeight: true; radius: theme.radiusMedium
-                        VideoOutput { id: proVideo; anchors.fill: parent; anchors.margins: 16; fillMode: VideoOutput.PreserveAspectFit }
+                        VideoOutput { id: proVideo; anchors.fill: parent; anchors.margins: 16; fillMode: VideoOutput.PreserveAspectFit; endOfStreamPolicy: VideoOutput.KeepLastFrame }
+                        Image { anchors.fill: parent; anchors.margins: 16; source: proPreviewThumbnail(); fillMode: Image.PreserveAspectFit; asynchronous: true; visible: !proHasVideoFrame && source !== "" }
                         GfSkeleton { tokens: theme; anchors.fill: parent; anchors.margins: 16; visible: proPlayer.mediaStatus === MediaPlayer.LoadingMedia; running: visible }
                         Column { anchors.centerIn: parent; spacing: 10; visible: proPlayer.mediaStatus === MediaPlayer.LoadingMedia
                             Text { text: "◌"; color: theme.accent; font.pixelSize: 26; anchors.horizontalCenter: parent.horizontalCenter; RotationAnimator on rotation { from: 0; to: 360; loops: Animation.Infinite; duration: 900 } }
@@ -470,9 +571,19 @@ ApplicationWindow {
                             ListView {
                                 id: proTimeline; Layout.fillWidth: true; Layout.fillHeight: true; orientation: ListView.Horizontal; spacing: 6; clip: true; boundsBehavior: Flickable.StopAtBounds
                                 model: draftSampling.timeline || []
+                                ScrollBar.horizontal: GfHorizontalScrollBar { tokens: theme }
+                                onContentXChanged: if (layoutReady) { proTimelineScroll = contentX; queueLayoutSave() }
+                                onCountChanged: Qt.callLater(function() { restoreTimelinePosition(proTimeline, proTimelineScroll) })
+                                onVisibleChanged: if (visible) Qt.callLater(function() { restoreTimelinePosition(proTimeline, proTimelineScroll) })
+                                WheelHandler {
+                                    target: null
+                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                    blocking: true
+                                    onWheel: function(event) { scrollTimelineByWheel(proTimeline, event) }
+                                }
                                 delegate: Rectangle {
                                     required property var modelData
-                                    width: 108; height: proTimeline.height; color: theme.surfaceSunken; radius: theme.radiusSmall
+                                    width: 108; height: Math.max(40, proTimeline.height - 14); color: theme.surfaceSunken; radius: theme.radiusSmall
                                     border.width: modelData.status === "selected" ? 2 : 1
                                     border.color: modelData.status === "selected" ? theme.accent : modelData.candidate ? theme.success : theme.border
                                     Image { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 3; height: parent.height - 42; source: fileUrl(modelData.thumbnail_path); fillMode: Image.PreserveAspectCrop; asynchronous: true }
@@ -738,15 +849,30 @@ ApplicationWindow {
                         handle: GfSplitHandle { tokens: theme; splitOrientation: Qt.Vertical; onResetRequested: { viewerTimelineSize = 196; queueLayoutSave() } }
                         GfPanel {
                             tokens: theme; sunken: true; SplitView.fillWidth: true; SplitView.fillHeight: true; SplitView.minimumHeight: 280; radius: theme.radiusMedium; clip: true
-                            WebEngineView { id: viewer; objectName: "gaussianViewer"; anchors.fill: parent; anchors.margins: 1; url: backend ? backend.viewerUrl : "about:blank"; focus: true; onTitleChanged: if (backend) backend.viewerPageTitle(title) }
-                            GfSkeleton { tokens: theme; anchors.fill: parent; anchors.margins: 1; visible: viewerLoading; running: visible }
+                            Rectangle {
+                                id: viewerStage
+                                anchors.fill: parent; anchors.margins: 1
+                                color: theme.dark ? theme.surfaceRaised : theme.surfaceSunken
+                            }
+                            WebEngineView {
+                                id: viewer
+                                objectName: "gaussianViewer"
+                                anchors.centerIn: parent
+                                readonly property real sourceAspect: sampling.width > 0 && sampling.height > 0 ? sampling.width / sampling.height : 16 / 9
+                                width: Math.min(parent.width - 2, (parent.height - 2) * sourceAspect)
+                                height: Math.min(parent.height - 2, (parent.width - 2) / sourceAspect)
+                                url: backend ? backend.viewerUrl : "about:blank"
+                                focus: true
+                                onTitleChanged: if (backend) backend.viewerPageTitle(title)
+                            }
+                            GfSkeleton { tokens: theme; anchors.fill: viewer; visible: viewerLoading; running: visible }
                             Column {
                                 anchors.centerIn: parent; spacing: 10; visible: viewerLoading
                                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "◌"; color: theme.accent; font.pixelSize: 28; RotationAnimator on rotation { from: 0; to: 360; loops: Animation.Infinite; duration: 900 } }
                                 Text { text: "Preparing 3D workspace…"; color: theme.textSecondary; font.pixelSize: theme.typeBody }
                             }
                             Rectangle {
-                                anchors.fill: parent; visible: timelineMessage !== ""; color: theme.dark ? "#111111ed" : "#f7f7f7ed"
+                                anchors.fill: viewer; visible: timelineMessage !== ""; color: theme.dark ? "#111111ed" : "#f7f7f7ed"
                                 ColumnLayout { anchors.centerIn: parent; width: Math.min(parent.width - 60, 720); height: Math.min(parent.height - 50, 480)
                                     Image { Layout.fillWidth: true; Layout.fillHeight: true; source: timelinePreviewSource; fillMode: Image.PreserveAspectFit; asynchronous: true }
                                     Text { Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter; text: timelineMessage; color: theme.warning; font.pixelSize: 16; font.weight: Font.DemiBold }
@@ -778,9 +904,19 @@ ApplicationWindow {
                                 ListView {
                                     id: viewerTimeline; Layout.fillWidth: true; Layout.fillHeight: true; orientation: ListView.Horizontal; model: viewerTimelineModel; spacing: 6; clip: true; boundsBehavior: Flickable.StopAtBounds
                                     visible: timelineOpen
+                                    ScrollBar.horizontal: GfHorizontalScrollBar { tokens: theme }
+                                    onContentXChanged: if (layoutReady) { viewerTimelineScroll = contentX; queueLayoutSave() }
+                                    onCountChanged: Qt.callLater(function() { restoreTimelinePosition(viewerTimeline, viewerTimelineScroll) })
+                                    onVisibleChanged: if (visible) Qt.callLater(function() { restoreTimelinePosition(viewerTimeline, viewerTimelineScroll) })
+                                    WheelHandler {
+                                        target: null
+                                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                        blocking: true
+                                        onWheel: function(event) { scrollTimelineByWheel(viewerTimeline, event) }
+                                    }
                                     delegate: Rectangle {
                                         required property var modelData; required property int index
-                                        width: 110 * timelineScale; height: viewerTimeline.height; radius: theme.radiusSmall; color: theme.surfaceSunken
+                                        width: 110 * timelineScale; height: Math.max(40, viewerTimeline.height - 14); radius: theme.radiusSmall; color: theme.surfaceSunken
                                         border.width: index === viewerPlayhead ? 2 : 1
                                         border.color: index === viewerPlayhead ? theme.accent : modelData.registration_status === "registered" ? theme.success : modelData.selection_status === "selected" || modelData.status === "selected" ? theme.warning : theme.border
                                         Image { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 3; height: parent.height - 40; source: fileUrl(modelData.extracted_image_path || modelData.thumbnail_path); fillMode: Image.PreserveAspectCrop; asynchronous: true }
