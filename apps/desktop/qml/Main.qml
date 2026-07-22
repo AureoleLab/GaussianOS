@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtQuick.LocalStorage
 import QtWebEngine
 import QtMultimedia
 
@@ -44,7 +45,20 @@ ApplicationWindow {
     property bool logsOpen: true
     property bool viewerLogsOpen: false
     property bool projectsExpanded: true
+    property bool layoutReady: false
+    property bool leftPaneOpen: true
+    property bool rightPaneOpen: true
+    property bool timelineOpen: true
+    property bool proInspectorOpen: true
+    property real leftPaneSize: 252
+    property real rightPaneSize: 318
+    property real projectPaneSize: 238
+    property real viewerTimelineSize: 196
+    property real welcomeLogSize: 138
+    property real proInspectorSize: 370
+    property real proTimelineSize: 196
     readonly property bool viewerActive: backend && backend.viewerUrl !== "about:blank"
+    readonly property bool viewerLoading: backend && String(backend.viewerStatus || "").toLowerCase().indexOf("loading") >= 0
     readonly property string route: proDialog.opened ? "pro" : viewerActive ? "viewer" : "home"
     readonly property var viewerTimelineModel: {
         var rows = sampling.timeline || []
@@ -98,6 +112,85 @@ ApplicationWindow {
     }
     function frameLabel(value) { return value === undefined || value === null ? "—" : value }
 
+    function clampLayout(value, minimum, maximum) { return Math.max(minimum, Math.min(maximum, Number(value))) }
+    function defaultLayout() {
+        leftPaneOpen = true
+        rightPaneOpen = true
+        timelineOpen = true
+        proInspectorOpen = true
+        leftPaneSize = 252
+        rightPaneSize = 318
+        projectPaneSize = 238
+        viewerTimelineSize = 196
+        welcomeLogSize = 138
+        proInspectorSize = 370
+        proTimelineSize = 196
+    }
+    function layoutDatabase() {
+        return LocalStorage.openDatabaseSync("GaussianFactoryUILayout", "1.0", "QML workspace layout", 65536)
+    }
+    function applyLayoutState(state) {
+        if (!state) return
+        if (state.themeMode === "light" || state.themeMode === "dark" || state.themeMode === "system") themeMode = state.themeMode
+        leftPaneOpen = state.leftPaneOpen !== false
+        rightPaneOpen = state.rightPaneOpen !== false
+        timelineOpen = state.timelineOpen !== false
+        proInspectorOpen = state.proInspectorOpen !== false
+        leftPaneSize = clampLayout(state.leftPaneSize || 252, 214, 420)
+        rightPaneSize = clampLayout(state.rightPaneSize || 318, 276, 480)
+        projectPaneSize = clampLayout(state.projectPaneSize || 238, 116, 440)
+        viewerTimelineSize = clampLayout(state.viewerTimelineSize || 196, 132, 360)
+        welcomeLogSize = clampLayout(state.welcomeLogSize || 138, 92, 300)
+        proInspectorSize = clampLayout(state.proInspectorSize || 370, 310, 520)
+        proTimelineSize = clampLayout(state.proTimelineSize || 196, 132, 360)
+    }
+    function loadLayout() {
+        try {
+            var db = layoutDatabase()
+            db.transaction(function(tx) {
+                tx.executeSql("CREATE TABLE IF NOT EXISTS layout_state (id INTEGER PRIMARY KEY, value TEXT)")
+                var rows = tx.executeSql("SELECT value FROM layout_state WHERE id = 1")
+                if (rows.rows.length) applyLayoutState(JSON.parse(rows.rows.item(0).value))
+            })
+        } catch (error) {
+            console.warn("Could not restore workspace layout:", error)
+        }
+        layoutReady = true
+    }
+    function saveLayout() {
+        if (!layoutReady) return
+        var state = {
+            "themeMode": themeMode,
+            "leftPaneOpen": leftPaneOpen,
+            "rightPaneOpen": rightPaneOpen,
+            "timelineOpen": timelineOpen,
+            "proInspectorOpen": proInspectorOpen,
+            "leftPaneSize": leftPaneSize,
+            "rightPaneSize": rightPaneSize,
+            "projectPaneSize": projectPaneSize,
+            "viewerTimelineSize": viewerTimelineSize,
+            "welcomeLogSize": welcomeLogSize,
+            "proInspectorSize": proInspectorSize,
+            "proTimelineSize": proTimelineSize
+        }
+        try {
+            var db = layoutDatabase()
+            db.transaction(function(tx) {
+                tx.executeSql("CREATE TABLE IF NOT EXISTS layout_state (id INTEGER PRIMARY KEY, value TEXT)")
+                tx.executeSql("INSERT OR REPLACE INTO layout_state (id, value) VALUES (1, ?)", [JSON.stringify(state)])
+            })
+        } catch (error) {
+            console.warn("Could not save workspace layout:", error)
+        }
+    }
+    function queueLayoutSave() { if (layoutReady) layoutSaveTimer.restart() }
+    function resetLayout() {
+        layoutReady = false
+        defaultLayout()
+        Qt.callLater(function() { layoutReady = true; saveLayout() })
+    }
+    onThemeModeChanged: queueLayoutSave()
+
     Connections {
         target: backend
         function onChanged() { current = JSON.parse(backend.currentJson || "{}"); viewerPlayhead = 0 }
@@ -138,6 +231,9 @@ ApplicationWindow {
 
     Timer { id: viewerPlayback; interval: 650; repeat: true; onTriggered: viewerPlayhead + 1 >= viewerTimelineModel.length ? stop() : activateViewerFrame(viewerPlayhead + 1) }
     Timer { id: acceptancePauseTimer; interval: 700; repeat: false; onTriggered: { proPlayer.position = 1000; proPlayer.pause() } }
+    Timer { id: layoutSaveTimer; interval: 420; repeat: false; onTriggered: saveLayout() }
+    Component.onCompleted: Qt.callLater(loadLayout)
+    onClosing: saveLayout()
     Shortcut { sequence: "Ctrl+1"; onActivated: window.themeMode = "light" }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.themeMode = "dark" }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.themeMode = "system" }
@@ -158,6 +254,8 @@ ApplicationWindow {
         width: 510
         padding: 0
         background: GfPanel { tokens: theme; raised: true }
+        enter: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: theme.motionNormal } NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: theme.motionSlow; easing.type: Easing.OutCubic } } }
+        exit: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: theme.motionFast } NumberAnimation { property: "scale"; from: 1; to: 0.98; duration: theme.motionFast } } }
         contentItem: ColumnLayout {
             spacing: theme.space12
             Item { Layout.fillWidth: true; Layout.preferredHeight: 12 }
@@ -186,6 +284,8 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose
         padding: 0
         background: GfPanel { tokens: theme; raised: true }
+        enter: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: theme.motionNormal } NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: theme.motionSlow; easing.type: Easing.OutCubic } } }
+        exit: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: theme.motionFast } NumberAnimation { property: "scale"; from: 1; to: 0.98; duration: theme.motionFast } } }
         contentItem: ColumnLayout {
             spacing: theme.space16
             Item { Layout.fillWidth: true; Layout.preferredHeight: 10 }
@@ -218,6 +318,8 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose
         padding: 0
         background: GfPanel { tokens: theme; raised: true }
+        enter: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: theme.motionNormal } NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: theme.motionSlow; easing.type: Easing.OutCubic } } }
+        exit: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: theme.motionFast } NumberAnimation { property: "scale"; from: 1; to: 0.98; duration: theme.motionFast } } }
         contentItem: ColumnLayout {
             spacing: theme.space16
             Item { Layout.fillWidth: true; Layout.preferredHeight: 8 }
@@ -247,6 +349,8 @@ ApplicationWindow {
         width: 520
         padding: 0
         background: GfPanel { tokens: theme; raised: true }
+        enter: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: theme.motionNormal } NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: theme.motionSlow; easing.type: Easing.OutCubic } } }
+        exit: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: theme.motionFast } NumberAnimation { property: "scale"; from: 1; to: 0.98; duration: theme.motionFast } } }
         contentItem: ColumnLayout {
             spacing: theme.space16
             Item { Layout.fillWidth: true; Layout.preferredHeight: 10 }
@@ -260,6 +364,7 @@ ApplicationWindow {
                 }
             }
             Text { Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; wrapMode: Text.Wrap; color: theme.textSecondary; text: "Theme changes apply globally to the workspace, Pro Mode, Viewer, timeline, dialogs and every control. Shortcuts: Ctrl+1 / Ctrl+2 / Ctrl+3." }
+            GfButton { tokens: theme; text: "Reset Workspace Layout"; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.fillWidth: true; onClicked: resetLayout() }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
             Text { text: "Runtime paths are discovered from the locked P2 environment.\nRenderer: Qt WebEngine · WebGL2"; color: theme.textSecondary; Layout.leftMargin: 22; lineHeight: 1.45 }
             RowLayout { Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
@@ -300,13 +405,22 @@ ApplicationWindow {
                     GfButton { tokens: theme; text: "Cancel"; enabled: false; Layout.preferredWidth: 92 }
                     GfButton { tokens: theme; text: "Export"; enabled: false; Layout.preferredWidth: 92 }
                     Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; color: theme.divider; Layout.leftMargin: 8; Layout.rightMargin: 4 }
+                    GfButton { tokens: theme; text: proInspectorOpen ? "Hide Inspector" : "Show Inspector"; quiet: true; compact: true; toolTip: "Toggle Sampling and Analysis"; onClicked: { proInspectorOpen = !proInspectorOpen; queueLayoutSave() } }
                     GfButton { tokens: theme; text: theme.dark ? "☀" : "☾"; quiet: true; compact: true; ToolTip.visible: hovered; ToolTip.text: "Toggle theme"; onClicked: window.themeMode = theme.dark ? "light" : "dark" }
                 }
             }
-            RowLayout {
-                Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 20; Layout.topMargin: 14; spacing: 16
-                ColumnLayout {
-                    Layout.fillWidth: true; Layout.fillHeight: true; spacing: 10
+            SplitView {
+                id: proWorkspaceSplit
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 20; Layout.topMargin: 14
+                orientation: Qt.Horizontal
+                handle: GfSplitHandle { tokens: theme; splitOrientation: Qt.Horizontal; onResetRequested: { proInspectorSize = 370; queueLayoutSave() } }
+                SplitView {
+                    id: proVerticalSplit
+                    SplitView.fillWidth: true; SplitView.fillHeight: true; SplitView.minimumWidth: 620
+                    orientation: Qt.Vertical
+                    handle: GfSplitHandle { tokens: theme; splitOrientation: Qt.Vertical; onResetRequested: { proTimelineSize = 196; queueLayoutSave() } }
+                    ColumnLayout {
+                        SplitView.fillWidth: true; SplitView.fillHeight: true; SplitView.minimumHeight: 360; spacing: 10
                     RowLayout {
                         Layout.fillWidth: true
                         Text { text: "Pro Mode"; color: theme.accent; font.pixelSize: 15; font.weight: Font.DemiBold }
@@ -315,6 +429,7 @@ ApplicationWindow {
                     GfPanel {
                         tokens: theme; sunken: true; Layout.fillWidth: true; Layout.fillHeight: true; radius: theme.radiusMedium
                         VideoOutput { id: proVideo; anchors.fill: parent; anchors.margins: 16; fillMode: VideoOutput.PreserveAspectFit }
+                        GfSkeleton { tokens: theme; anchors.fill: parent; anchors.margins: 16; visible: proPlayer.mediaStatus === MediaPlayer.LoadingMedia; running: visible }
                         Column { anchors.centerIn: parent; spacing: 10; visible: proPlayer.mediaStatus === MediaPlayer.LoadingMedia
                             Text { text: "◌"; color: theme.accent; font.pixelSize: 26; anchors.horizontalCenter: parent.horizontalCenter; RotationAnimator on rotation { from: 0; to: 360; loops: Animation.Infinite; duration: 900 } }
                             Text { text: "Loading preview…"; color: theme.textSecondary }
@@ -330,8 +445,14 @@ ApplicationWindow {
                         Text { text: Qt.formatTime(new Date(proPlayer.duration), "mm:ss:zzz"); color: theme.textSecondary; font.pixelSize: theme.typeSmall }
                         Text { text: "▣"; color: theme.textSecondary; font.pixelSize: 18 }
                     }
+                    }
                     GfPanel {
-                        tokens: theme; Layout.fillWidth: true; Layout.preferredHeight: 196; radius: theme.radiusMedium
+                        tokens: theme
+                        SplitView.fillWidth: true; SplitView.preferredHeight: proTimelineSize
+                        SplitView.minimumHeight: 132; SplitView.maximumHeight: 360
+                        radius: theme.radiusMedium
+                        onHeightChanged: if (layoutReady && height >= 132) { proTimelineSize = height; queueLayoutSave() }
+                        Behavior on SplitView.preferredHeight { NumberAnimation { duration: theme.motionSlow; easing.type: Easing.OutCubic } }
                         ColumnLayout {
                             anchors.fill: parent; anchors.margins: 12; spacing: 8
                             RowLayout {
@@ -361,15 +482,27 @@ ApplicationWindow {
                                     }
                                     Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 3; color: modelData.status === "selected" ? theme.accent : modelData.candidate ? theme.success : theme.textTertiary; radius: 2 }
                                     MouseArea { id: proThumbMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: proPlayer.position = modelData.timestamp_seconds * 1000 }
-                                    ToolTip.visible: proThumbMouse.containsMouse; ToolTip.text: modelData.reason || modelData.status
+                                    GfToolTip { tokens: theme; tipText: modelData.reason || modelData.status || ""; requested: proThumbMouse.containsMouse && tipText !== "not_applicable" }
                                 }
-                                Text { anchors.centerIn: parent; visible: proTimeline.count === 0; text: importDraft.status === "analyzing" ? "Analyzing frames…" : "Analyze to populate the keyframe timeline"; color: theme.textTertiary }
+                                Row {
+                                    anchors.fill: parent; spacing: 6; visible: proTimeline.count === 0 && importDraft.status === "analyzing"
+                                    Repeater { model: 8; GfSkeleton { required property int index; tokens: theme; width: 108; height: parent.height; running: parent.visible } }
+                                }
+                                Text { anchors.centerIn: parent; visible: proTimeline.count === 0 && importDraft.status !== "analyzing"; text: "Analyze to populate the keyframe timeline"; color: theme.textTertiary }
                             }
                         }
                     }
                 }
                 GfPanel {
-                    tokens: theme; Layout.preferredWidth: 370; Layout.fillHeight: true; radius: theme.radiusMedium
+                    tokens: theme
+                    SplitView.preferredWidth: proInspectorOpen ? proInspectorSize : 0
+                    SplitView.minimumWidth: proInspectorOpen ? 310 : 0
+                    SplitView.maximumWidth: 520
+                    SplitView.fillHeight: true
+                    opacity: proInspectorOpen ? 1 : 0; enabled: proInspectorOpen; clip: true; radius: theme.radiusMedium
+                    onWidthChanged: if (layoutReady && proInspectorOpen && width >= 310) { proInspectorSize = width; queueLayoutSave() }
+                    Behavior on SplitView.preferredWidth { NumberAnimation { duration: theme.motionSlow; easing.type: Easing.OutCubic } }
+                    Behavior on opacity { NumberAnimation { duration: theme.motionNormal } }
                     ScrollView {
                         anchors.fill: parent; contentWidth: availableWidth; clip: true
                         ColumnLayout {
@@ -456,10 +589,12 @@ ApplicationWindow {
             GfButton { tokens: theme; text: "Cancel"; compact: true; Layout.preferredWidth: 88; enabled: current.status === "running"; onClicked: backend.cancel() }
             GfButton { tokens: theme; text: "Export"; iconText: "↑"; compact: true; Layout.preferredWidth: 92; enabled: stageState("export").status === "succeeded"; onClicked: backend.openExportFolder() }
             Item { Layout.fillWidth: true }
-            Rectangle { Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4; color: statusColor(current.status || "idle") }
+            GfStatusDot { tokens: theme; status: current.status || "idle" }
             Text { text: current.name || "Idle"; color: theme.textSecondary; elide: Text.ElideRight; Layout.maximumWidth: 210; font.pixelSize: theme.typeSmall }
             Text { visible: !!current.project_id; text: (current.status || "idle").toUpperCase(); color: statusColor(current.status || "idle"); font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold }
             Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; color: theme.divider; Layout.leftMargin: 6; Layout.rightMargin: 5 }
+            GfButton { tokens: theme; text: leftPaneOpen ? "Hide Left" : "Show Left"; quiet: true; compact: true; toolTip: "Toggle Projects and Artifacts"; onClicked: { leftPaneOpen = !leftPaneOpen; queueLayoutSave() } }
+            GfButton { tokens: theme; text: rightPaneOpen ? "Hide Inspector" : "Show Inspector"; quiet: true; compact: true; toolTip: "Toggle Inspector"; onClicked: { rightPaneOpen = !rightPaneOpen; queueLayoutSave() } }
             GfButton { tokens: theme; text: theme.dark ? "☀" : "☾"; quiet: true; compact: true; onClicked: window.themeMode = theme.dark ? "light" : "dark" }
             GfButton { tokens: theme; text: "⚙  Settings"; quiet: true; compact: true; onClicked: settingsDialog.open() }
         }
@@ -467,13 +602,23 @@ ApplicationWindow {
 
     ColumnLayout {
         anchors.fill: parent; spacing: 0
-        RowLayout {
-            Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
+        SplitView {
+            id: workspaceSplit
+            Layout.fillWidth: true; Layout.fillHeight: true
+            orientation: Qt.Horizontal
+            handle: GfSplitHandle { tokens: theme; splitOrientation: Qt.Horizontal; onResetRequested: resetLayout() }
 
             Rectangle {
-                Layout.preferredWidth: viewerActive ? 222 : 286; Layout.minimumWidth: 214; Layout.fillHeight: true
+                id: leftPane
+                SplitView.preferredWidth: leftPaneOpen ? leftPaneSize : 0
+                SplitView.minimumWidth: leftPaneOpen ? 214 : 0
+                SplitView.maximumWidth: 420
+                SplitView.fillHeight: true
+                opacity: leftPaneOpen ? 1 : 0; enabled: leftPaneOpen; clip: true
                 color: theme.surface; border.color: theme.divider
-                Behavior on Layout.preferredWidth { NumberAnimation { duration: theme.motionNormal; easing.type: Easing.OutCubic } }
+                onWidthChanged: if (layoutReady && leftPaneOpen && width >= 214) { leftPaneSize = width; queueLayoutSave() }
+                Behavior on SplitView.preferredWidth { NumberAnimation { duration: theme.motionSlow; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: theme.motionNormal } }
                 ColumnLayout {
                     anchors.fill: parent; spacing: 0
                     Text { text: "PROJECTS"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 18; Layout.topMargin: 18; Layout.bottomMargin: 10 }
@@ -485,17 +630,24 @@ ApplicationWindow {
                             width: projectList.width - 20; height: 54; hoverEnabled: true
                             highlighted: modelData.project_id === current.project_id
                             onClicked: backend.selectProject(modelData.project_id)
-                            background: Rectangle { radius: theme.radiusMedium; color: highlighted ? theme.accent : hovered ? theme.controlHover : "transparent"; border.width: highlighted && activeFocus ? 1 : 0; border.color: "#ffffff66"; Behavior on color { ColorAnimation { duration: theme.motionFast } } }
+                            background: Rectangle {
+                                radius: theme.radiusMedium
+                                color: highlighted ? theme.selectionStrong : hovered ? theme.controlHover : "transparent"
+                                border.width: highlighted ? 1 : 0
+                                border.color: activeFocus ? theme.accent : theme.border
+                                Behavior on color { ColorAnimation { duration: theme.motionFast } }
+                                Rectangle { width: 2; height: parent.height - 14; anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; radius: 1; color: theme.accent; visible: highlighted }
+                            }
                             contentItem: RowLayout {
                                 spacing: 8
-                                Rectangle { Layout.preferredWidth: 22; Layout.preferredHeight: 22; radius: 4; color: highlighted ? "#ffffff18" : theme.surfaceSunken; border.color: highlighted ? "#ffffff88" : theme.border
-                                    Text { anchors.centerIn: parent; text: "◇"; color: highlighted ? "#ffffff" : theme.textSecondary; font.pixelSize: 15 }
+                                Rectangle { Layout.preferredWidth: 22; Layout.preferredHeight: 22; radius: 4; color: theme.surfaceSunken; border.color: highlighted ? theme.accent : theme.border
+                                    Text { anchors.centerIn: parent; text: "◇"; color: highlighted ? theme.accent : theme.textSecondary; font.pixelSize: 15 }
                                 }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                    Text { Layout.fillWidth: true; text: modelData.name; color: highlighted ? "#ffffff" : theme.text; font.weight: Font.DemiBold; font.pixelSize: theme.typeBody; elide: Text.ElideRight }
-                                    Text { text: modelData.status.toUpperCase() + "  ·  " + Math.round((modelData.progress || 0) * 100) + "%"; color: highlighted ? "#d9eaff" : statusColor(modelData.status); font.pixelSize: theme.typeCaption }
+                                    Text { Layout.fillWidth: true; text: modelData.name; color: theme.text; font.weight: Font.DemiBold; font.pixelSize: theme.typeBody; elide: Text.ElideRight }
+                                    Text { text: modelData.status.toUpperCase() + "  ·  " + Math.round((modelData.progress || 0) * 100) + "%"; color: statusColor(modelData.status); font.pixelSize: theme.typeCaption }
                                 }
-                                Text { text: highlighted ? "›" : ""; color: "#ffffff"; font.pixelSize: 18 }
+                                Text { text: highlighted ? "›" : ""; color: theme.textSecondary; font.pixelSize: 18 }
                             }
                         }
                         Text { anchors.centerIn: parent; visible: projectList.count === 0; text: "No projects yet"; color: theme.textTertiary; font.pixelSize: theme.typeSmall }
@@ -538,12 +690,15 @@ ApplicationWindow {
             }
 
             Rectangle {
-                Layout.fillWidth: true; Layout.fillHeight: true; color: theme.background
-                ColumnLayout {
-                    anchors.fill: parent; spacing: 8; anchors.margins: viewerActive ? 10 : 8
+                id: centerPane
+                SplitView.fillWidth: true; SplitView.fillHeight: true; SplitView.minimumWidth: 560; color: theme.background
+                SplitView {
+                    id: centerVerticalSplit
+                    anchors.fill: parent; orientation: Qt.Vertical; anchors.margins: viewerActive ? 10 : 8
+                    handle: GfSplitHandle { tokens: theme; splitOrientation: Qt.Vertical; onResetRequested: resetLayout() }
 
                     Item {
-                        Layout.fillWidth: true; Layout.fillHeight: true; visible: !viewerActive
+                        SplitView.fillWidth: true; SplitView.fillHeight: true; SplitView.minimumHeight: 360; visible: !viewerActive
                         GfPanel {
                             tokens: theme; anchors.fill: parent; radius: theme.radiusLarge
                             Column {
@@ -557,9 +712,9 @@ ApplicationWindow {
                                             ctx.beginPath(); ctx.moveTo(x-s*.72,y-s*.08); ctx.lineTo(x,y+s*.34); ctx.lineTo(x,y+s*1.18); ctx.lineTo(x-s*.72,y+s*.72); ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); ctx.stroke();
                                             ctx.beginPath(); ctx.moveTo(x+s*.72,y-s*.08); ctx.lineTo(x,y+s*.34); ctx.lineTo(x,y+s*1.18); ctx.lineTo(x+s*.72,y+s*.72); ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); ctx.stroke();
                                         }
-                                        var faint = theme.dark ? "rgba(47,125,246,.08)" : "rgba(47,125,246,.035)";
-                                        var edge = theme.dark ? "rgba(90,150,240,.34)" : "rgba(90,135,205,.22)";
-                                        cube(112,50,62,faint,edge); cube(112,102,62,faint,edge); cube(178,116,36,theme.dark?"rgba(47,125,246,.34)":"rgba(47,125,246,.22)",theme.accent);
+                                        var faint = theme.dark ? "rgba(255,255,255,.035)" : "rgba(20,20,20,.018)";
+                                        var edge = theme.dark ? "rgba(210,210,210,.24)" : "rgba(70,70,70,.18)";
+                                        cube(112,50,62,faint,edge); cube(112,102,62,faint,edge); cube(178,116,36,theme.dark?"rgba(127,149,181,.20)":"rgba(83,107,140,.13)",theme.accent);
                                     }
                                     Connections { target: theme; function onDarkChanged() { parent.requestPaint() } }
                                 }
@@ -575,11 +730,20 @@ ApplicationWindow {
                         }
                     }
 
-                    ColumnLayout {
-                        Layout.fillWidth: true; Layout.fillHeight: true; visible: viewerActive; spacing: 7
+                    SplitView {
+                        id: viewerVerticalSplit
+                        SplitView.fillWidth: true; SplitView.fillHeight: true; visible: viewerActive
+                        orientation: Qt.Vertical
+                        handle: GfSplitHandle { tokens: theme; splitOrientation: Qt.Vertical; onResetRequested: { viewerTimelineSize = 196; queueLayoutSave() } }
                         GfPanel {
-                            tokens: theme; sunken: true; Layout.fillWidth: true; Layout.fillHeight: true; radius: theme.radiusMedium; clip: true
+                            tokens: theme; sunken: true; SplitView.fillWidth: true; SplitView.fillHeight: true; SplitView.minimumHeight: 280; radius: theme.radiusMedium; clip: true
                             WebEngineView { id: viewer; objectName: "gaussianViewer"; anchors.fill: parent; anchors.margins: 1; url: backend ? backend.viewerUrl : "about:blank"; focus: true; onTitleChanged: if (backend) backend.viewerPageTitle(title) }
+                            GfSkeleton { tokens: theme; anchors.fill: parent; anchors.margins: 1; visible: viewerLoading; running: visible }
+                            Column {
+                                anchors.centerIn: parent; spacing: 10; visible: viewerLoading
+                                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "◌"; color: theme.accent; font.pixelSize: 28; RotationAnimator on rotation { from: 0; to: 360; loops: Animation.Infinite; duration: 900 } }
+                                Text { text: "Preparing 3D workspace…"; color: theme.textSecondary; font.pixelSize: theme.typeBody }
+                            }
                             Rectangle {
                                 anchors.fill: parent; visible: timelineMessage !== ""; color: theme.dark ? "#111111ed" : "#f7f7f7ed"
                                 ColumnLayout { anchors.centerIn: parent; width: Math.min(parent.width - 60, 720); height: Math.min(parent.height - 50, 480)
@@ -589,11 +753,19 @@ ApplicationWindow {
                             }
                         }
                         GfPanel {
-                            tokens: theme; Layout.fillWidth: true; Layout.preferredHeight: current.input_kind === "video" ? 196 : 0; visible: current.input_kind === "video"; radius: theme.radiusMedium
+                            tokens: theme
+                            SplitView.fillWidth: true
+                            SplitView.preferredHeight: current.input_kind === "video" ? (timelineOpen ? viewerTimelineSize : 38) : 0
+                            SplitView.minimumHeight: current.input_kind === "video" ? (timelineOpen ? 132 : 38) : 0
+                            SplitView.maximumHeight: current.input_kind === "video" ? 360 : 0
+                            visible: current.input_kind === "video"; radius: theme.radiusMedium; clip: true
+                            onHeightChanged: if (layoutReady && timelineOpen && height >= 132) { viewerTimelineSize = height; queueLayoutSave() }
+                            Behavior on SplitView.preferredHeight { NumberAnimation { duration: theme.motionSlow; easing.type: Easing.OutCubic } }
                             ColumnLayout { anchors.fill: parent; anchors.margins: 8; spacing: 6
                                 RowLayout { Layout.fillWidth: true
                                     Text { text: "KEYFRAME CAMERA TIMELINE"; color: theme.text; font.pixelSize: theme.typeSmall; font.weight: Font.DemiBold }
                                     Text { text: "In " + (sampling.in_frame || 0) + " · Out " + frameLabel(sampling.out_frame) + "    " + (sampling.source_total_frames || 0) + " frames"; color: theme.textSecondary; font.pixelSize: theme.typeSmall }
+                                    GfButton { tokens: theme; text: timelineOpen ? "Collapse" : "Expand"; quiet: true; compact: true; toolTip: "Toggle camera timeline"; onClicked: { timelineOpen = !timelineOpen; queueLayoutSave() } }
                                     GfButton { tokens: theme; text: "Prev"; compact: true; enabled: viewerTimelineModel.length > 0; onClicked: activateViewerFrame(viewerPlayhead - 1) }
                                     GfButton { tokens: theme; text: viewerPlayback.running ? "Pause" : "Play"; compact: true; enabled: viewerTimelineModel.length > 0; onClicked: viewerPlayback.running ? viewerPlayback.stop() : viewerPlayback.start() }
                                     GfButton { tokens: theme; text: "Next"; compact: true; enabled: viewerTimelineModel.length > 0; onClicked: activateViewerFrame(viewerPlayhead + 1) }
@@ -604,6 +776,7 @@ ApplicationWindow {
                                 }
                                 ListView {
                                     id: viewerTimeline; Layout.fillWidth: true; Layout.fillHeight: true; orientation: ListView.Horizontal; model: viewerTimelineModel; spacing: 6; clip: true; boundsBehavior: Flickable.StopAtBounds
+                                    visible: timelineOpen
                                     delegate: Rectangle {
                                         required property var modelData; required property int index
                                         width: 110 * timelineScale; height: viewerTimeline.height; radius: theme.radiusSmall; color: theme.surfaceSunken
@@ -615,7 +788,7 @@ ApplicationWindow {
                                             Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 9; color: modelData.registration_status === "registered" ? theme.success : theme.textSecondary; text: modelData.registration_status || modelData.selection_status || modelData.status || "frame" }
                                         }
                                         MouseArea { id: viewerThumbMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: activateViewerFrame(index) }
-                                        ToolTip.visible: viewerThumbMouse.containsMouse; ToolTip.text: modelData.reason || modelData.registration_status || modelData.status
+                                        GfToolTip { tokens: theme; tipText: modelData.reason || modelData.registration_status || modelData.status || ""; requested: viewerThumbMouse.containsMouse && tipText !== "not_applicable" }
                                     }
                                     Text { anchors.centerIn: parent; visible: viewerTimeline.count === 0; text: sampling.camera_mapping_stale ? "Timeline is stale · regenerate to rebuild cameras" : "No frames match this filter"; color: theme.textTertiary }
                                 }
@@ -624,8 +797,14 @@ ApplicationWindow {
                     }
 
                     GfPanel {
-                        tokens: theme; Layout.fillWidth: true; Layout.preferredHeight: !viewerActive ? (logsOpen ? 138 : 36) : 0; visible: !viewerActive; radius: theme.radiusMedium; clip: true
-                        Behavior on Layout.preferredHeight { NumberAnimation { duration: theme.motionNormal } }
+                        tokens: theme
+                        SplitView.fillWidth: true
+                        SplitView.preferredHeight: !viewerActive ? (logsOpen ? welcomeLogSize : 36) : 0
+                        SplitView.minimumHeight: !viewerActive ? (logsOpen ? 92 : 36) : 0
+                        SplitView.maximumHeight: !viewerActive ? 300 : 0
+                        visible: !viewerActive; radius: theme.radiusMedium; clip: true
+                        onHeightChanged: if (layoutReady && logsOpen && !viewerActive && height >= 92) { welcomeLogSize = height; queueLayoutSave() }
+                        Behavior on SplitView.preferredHeight { NumberAnimation { duration: theme.motionSlow; easing.type: Easing.OutCubic } }
                         ColumnLayout { anchors.fill: parent; spacing: 0
                             Item { Layout.fillWidth: true; Layout.preferredHeight: 36
                                 RowLayout { anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10
@@ -642,9 +821,16 @@ ApplicationWindow {
             }
 
             Rectangle {
-                Layout.preferredWidth: viewerActive ? 292 : 334; Layout.minimumWidth: 276; Layout.fillHeight: true
+                id: rightPane
+                SplitView.preferredWidth: rightPaneOpen ? rightPaneSize : 0
+                SplitView.minimumWidth: rightPaneOpen ? 276 : 0
+                SplitView.maximumWidth: 480
+                SplitView.fillHeight: true
+                opacity: rightPaneOpen ? 1 : 0; enabled: rightPaneOpen; clip: true
                 color: theme.surface; border.color: theme.divider
-                Behavior on Layout.preferredWidth { NumberAnimation { duration: theme.motionNormal; easing.type: Easing.OutCubic } }
+                onWidthChanged: if (layoutReady && rightPaneOpen && width >= 276) { rightPaneSize = width; queueLayoutSave() }
+                Behavior on SplitView.preferredWidth { NumberAnimation { duration: theme.motionSlow; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: theme.motionNormal } }
                 ScrollView {
                     anchors.fill: parent; contentWidth: availableWidth; clip: true
                     ColumnLayout {
@@ -722,7 +908,7 @@ ApplicationWindow {
                                         color: current.current_stage === modelData ? theme.selection : theme.surfaceRaised
                                         border.color: current.current_stage === modelData ? theme.accent : theme.borderSubtle
                                         RowLayout { anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 9
-                                            Rectangle { Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4; color: statusColor(stageState(modelData).status) }
+                                            GfStatusDot { tokens: theme; status: stageState(modelData).status }
                                             Text { text: modelData.charAt(0).toUpperCase() + modelData.slice(1); color: theme.text; font.pixelSize: theme.typeSmall; font.weight: current.current_stage === modelData ? Font.DemiBold : Font.Normal; Layout.fillWidth: true }
                                             Text { text: stageState(modelData).status.toUpperCase(); color: statusColor(stageState(modelData).status); font.pixelSize: 9 }
                                         }

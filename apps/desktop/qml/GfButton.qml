@@ -10,26 +10,32 @@ Control {
     property bool quiet: false
     property bool compact: false
     property bool loading: false
+    property string toolTip: text
     signal clicked()
 
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     implicitHeight: compact ? tokens.compactHeight : tokens.controlHeight
     implicitWidth: Math.max(70, label.implicitWidth + (iconText ? 38 : 24))
-    opacity: enabled ? 1 : 0.48
+    opacity: enabled ? 1 : 0.42
+    scale: mouse.pressed ? 0.985 : 1.0
+    transformOrigin: Item.Center
+    Behavior on opacity { NumberAnimation { duration: tokens.motionFast } }
+    Behavior on scale { NumberAnimation { duration: tokens.motionFast; easing.type: Easing.OutCubic } }
     Accessible.role: Accessible.Button
     Accessible.name: text
 
     background: Rectangle {
         radius: tokens.radiusSmall
         color: {
-            if (control.primary) return mouse.pressed ? tokens.accentPressed : mouse.containsMouse ? tokens.accentHover : tokens.accent
+            if (control.primary) return mouse.pressed ? tokens.primaryPressed : mouse.containsMouse ? tokens.primaryHover : tokens.primaryControl
             if (control.quiet) return mouse.pressed ? tokens.controlPressed : mouse.containsMouse ? tokens.controlHover : "transparent"
             return mouse.pressed ? tokens.controlPressed : mouse.containsMouse ? tokens.controlHover : tokens.control
         }
         border.width: control.quiet && !control.activeFocus ? 0 : 1
-        border.color: control.activeFocus ? tokens.accent : (control.primary ? tokens.accentPressed : tokens.border)
+        border.color: control.activeFocus ? tokens.accent : (control.primary ? tokens.border : tokens.border)
         Behavior on color { ColorAnimation { duration: tokens.motionFast } }
+        Behavior on border.color { ColorAnimation { duration: tokens.motionFast } }
     }
 
     contentItem: Item {
@@ -68,6 +74,7 @@ Control {
         cursorShape: Qt.PointingHandCursor
         onClicked: control.clicked()
     }
+    GfToolTip { tokens: control.tokens; tipText: control.toolTip; requested: mouse.containsMouse && control.toolTip !== "" && control.enabled }
     Keys.onSpacePressed: if (enabled) clicked()
     Keys.onReturnPressed: if (enabled) clicked()
 }

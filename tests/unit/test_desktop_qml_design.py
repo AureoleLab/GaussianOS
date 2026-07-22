@@ -53,3 +53,26 @@ def test_p29_button_content_is_centered_in_a_stretched_control() -> None:
     assert "id: contentRow" in button
     assert "anchors.centerIn: parent" in button
     assert "Accessible.role: Accessible.Button" in button
+
+
+def test_p29_workspace_is_resizable_animated_and_persistent() -> None:
+    main = (QML / "Main.qml").read_text(encoding="utf-8")
+
+    assert "import QtQuick.LocalStorage" in main
+    assert main.count("SplitView {") >= 4
+    assert "GaussianFactoryUILayout" in main
+    assert "queueLayoutSave" in main
+    assert "resetLayout" in main
+    assert "GfSplitHandle" in main
+    assert "GfSkeleton" in main
+    assert "GfStatusDot" in main
+
+
+def test_p29_refined_palette_is_neutral_and_accent_is_restrained() -> None:
+    tokens = (QML / "DesignTokens.qml").read_text(encoding="utf-8")
+
+    for color in ('"#181818"', '"#1c1c1c"', '"#222222"'):
+        assert color in tokens
+    assert 'primaryControl: dark ? "#303030"' in tokens
+    assert "shimmerBase" in tokens
+    assert "shimmerHighlight" in tokens

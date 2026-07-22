@@ -11,6 +11,10 @@ ComboBox {
     font.pixelSize: tokens.typeBody
     leftPadding: 12
     rightPadding: 30
+    opacity: enabled ? 1 : 0.42
+    scale: pressed ? 0.99 : 1
+    Behavior on opacity { NumberAnimation { duration: tokens.motionFast } }
+    Behavior on scale { NumberAnimation { duration: tokens.motionFast; easing.type: Easing.OutCubic } }
 
     contentItem: Text {
         text: control.displayText
@@ -33,6 +37,7 @@ ComboBox {
         border.width: 1
         border.color: control.activeFocus ? tokens.accent : tokens.border
         Behavior on color { ColorAnimation { duration: tokens.motionFast } }
+        Behavior on border.color { ColorAnimation { duration: tokens.motionFast } }
     }
     delegate: ItemDelegate {
         required property var modelData
@@ -53,6 +58,19 @@ ComboBox {
         width: control.width
         implicitHeight: Math.min(contentItem.implicitHeight + 8, 280)
         padding: 4
+        transformOrigin: Item.Top
+        enter: Transition {
+            ParallelAnimation {
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: tokens.motionFast; easing.type: Easing.OutCubic }
+                NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: tokens.motionNormal; easing.type: Easing.OutCubic }
+            }
+        }
+        exit: Transition {
+            ParallelAnimation {
+                NumberAnimation { property: "opacity"; from: 1; to: 0; duration: tokens.motionFast }
+                NumberAnimation { property: "scale"; from: 1; to: 0.98; duration: tokens.motionFast }
+            }
+        }
         contentItem: ListView {
             clip: true
             implicitHeight: contentHeight
