@@ -184,12 +184,16 @@ def _baseline_colmap(config: FallbackConfig, work: Path, logs: Path) -> dict[str
 
 
 def _load_model(config: FallbackConfig):
-    from mapanything.models import MapAnything
-
     source = Path(config.mapanything_source).resolve()
     dino_source = Path(config.dinov2_source).resolve()
     if _git_commit(source) != MAPANYTHING_COMMIT or _git_commit(dino_source) != DINO_COMMIT:
         raise RuntimeError("source commit lock mismatch")
+    # A portable runtime installs MapAnything from the locked source directory
+    # rather than retaining an editable-install pointer to the build machine.
+    source_text = str(source)
+    if source_text not in sys.path:
+        sys.path.insert(0, source_text)
+    from mapanything.models import MapAnything
     checkpoint = Path(config.mapanything_checkpoint).resolve()
     dino_checkpoint = Path(config.dinov2_checkpoint).resolve()
     if checkpoint.stat().st_size != 4914062480 or _sha256(checkpoint) != CHECKPOINT_SHA256:

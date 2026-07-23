@@ -11,12 +11,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
 
 from packages.exportkit import PlyFormatError, read_gaussian_ply_document, read_pointcloud_ply
-from packages.scene_bundle import GaussianTensors, load_scene_bundle
+from packages.scene_bundle import GaussianTensors, PointCloudTensors, load_scene_bundle
+
+
+# SceneBundle stores OpenCV-style axes (x right, y down, z forward).  The
+# renderer exposes a conventional right-handed Y-up world.  This is the only
+# root transform used by the Viewer and is applied uniformly to Gaussians,
+# points and camera geometry.
+SCENE_ROOT_TRANSFORM = np.asarray(
+    ((1.0, 0.0, 0.0, 0.0),
+     (0.0, -1.0, 0.0, 0.0),
+     (0.0, 0.0, -1.0, 0.0),
+     (0.0, 0.0, 0.0, 1.0)),
+    dtype=np.float64,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +38,7 @@ class ViewerScene:
     bundle_path: Path
     gaussian_path: Path
     pointcloud_path: Path | None
+    pointcloud_bytes: bytes | None
     gaussian_count: int
     camera_count: int
     sh_degree: int
@@ -35,6 +50,99 @@ class ViewerScene:
     initial_camera_forward: tuple[float, float, float] | None
     initial_camera_up: tuple[float, float, float] | None
     initial_focus_distance: float | None
+    scene_root_transform: tuple[tuple[float, float, float, float], ...]
+    canonical_world_up: tuple[float, float, float]
+
+
+_PLY_SCALAR_DTYPES = {
+    "char": "i1", "int8": "i1", "uchar": "u1", "uint8": "u1",
+    "short": "<i2", "int16": "<i2", "ushort": "<u2", "uint16": "<u2",
+    "int": "<i4", "int32": "<i4", "uint": "<u4", "uint32": "<u4",
+    "float": "<f4", "float32": "<f4", "double": "<f8", "float64": "<f8",
+}
+
+
+def _read_compatible_pointcloud(path: Path) -> PointCloudTensors:
+    """Read ExportKit or a scalar binary little-endian point PLY.
+
+    Compatibility PLYs are accepted here rather than in ExportKit because
+    they do not carry the interchange-format comments required by that API.
+    """
+    try:
+        return read_pointcloud_ply(path)
+    except PlyFormatError:
+        payload = path.read_bytes()
+        match = re.search(br"end_header\r?\n", payload[: 1024 * 1024])
+        if match is None:
+            raise ValueError("unsupported standard point-cloud PLY layout")
+        try:
+            lines = payload[:match.end()].decode("ascii").splitlines()
+        except UnicodeDecodeError as exc:
+            raise ValueError("point-cloud PLY header must be ASCII") from exc
+        if not lines or lines[0] != "ply" or "format binary_little_endian 1.0" not in lines:
+            raise ValueError("only binary little-endian point-cloud PLY is supported")
+        vertex_count: int | None = None
+        properties: list[tuple[str, str]] = []
+        in_vertices = False
+        for line in lines:
+            fields = line.split()
+            if len(fields) == 3 and fields[:2] == ["element", "vertex"]:
+                vertex_count = int(fields[2]); in_vertices = True
+            elif fields[:1] == ["element"]:
+                in_vertices = False
+            elif in_vertices and fields[:1] == ["property"]:
+                if len(fields) != 3 or fields[1] not in _PLY_SCALAR_DTYPES:
+                    raise ValueError("unsupported point-cloud PLY vertex property")
+                properties.append((fields[2], _PLY_SCALAR_DTYPES[fields[1]]))
+        names = [name for name, _ in properties]
+        if vertex_count is None or vertex_count <= 0 or not all(name in names for name in ("x", "y", "z")):
+            raise ValueError("point-cloud PLY is missing scalar xyz vertices")
+        dtype = np.dtype(properties)
+        expected = vertex_count * dtype.itemsize
+        body = payload[match.end():]
+        if len(body) != expected:
+            raise ValueError("point-cloud PLY payload size does not match its header")
+        vertices = np.frombuffer(body, dtype=dtype, count=vertex_count)
+        positions = np.column_stack([vertices[name] for name in ("x", "y", "z")]).astype(np.float32)
+        colors = None
+        if all(name in names for name in ("red", "green", "blue")):
+            colors = np.column_stack([vertices[name] for name in ("red", "green", "blue")]).astype(np.uint8)
+        return PointCloudTensors(positions=positions, colors_rgb=colors)
+
+
+def _canonical_pointcloud_bytes(pointcloud: PointCloudTensors, source_to_scene: np.ndarray) -> bytes:
+    """Return a viewer-only PLY in the SceneBundle's stored world.
+
+    Reconstruction point clouds are source-world artifacts, whereas trained
+    Gaussians and cameras are already stored in normalized SceneBundle world.
+    Applying the manifest transform once at this boundary prevents the Viewer
+    from maintaining independent transforms for its render layers.
+    """
+    homogeneous = np.column_stack(
+        (pointcloud.positions.astype(np.float64), np.ones(len(pointcloud.positions), dtype=np.float64))
+    )
+    positions = (homogeneous @ source_to_scene.T)[:, :3].astype("<f4")
+    has_color = pointcloud.colors_rgb is not None
+    fields: list[tuple[str, str]] = [(name, "<f4") for name in ("x", "y", "z")]
+    if has_color:
+        fields.extend((name, "u1") for name in ("red", "green", "blue"))
+    vertices = np.empty(len(positions), dtype=np.dtype(fields))
+    for index, name in enumerate(("x", "y", "z")):
+        vertices[name] = positions[:, index]
+    if has_color:
+        assert pointcloud.colors_rgb is not None
+        for index, name in enumerate(("red", "green", "blue")):
+            vertices[name] = pointcloud.colors_rgb[:, index]
+    header = [
+        "ply", "format binary_little_endian 1.0",
+        "comment gaussian_factory_viewer_space scene_bundle_world",
+        f"element vertex {len(vertices)}",
+        "property float x", "property float y", "property float z",
+    ]
+    if has_color:
+        header.extend(("property uchar red", "property uchar green", "property uchar blue"))
+    header.append("end_header")
+    return ("\n".join(header) + "\n").encode("ascii") + vertices.tobytes(order="C")
 
 
 def activate_gaussians(
@@ -97,20 +205,21 @@ def load_viewer_scene(
         raise ValueError("SceneBundle has no Gaussian tensors")
     if len(bundle.gaussians.means) != len(gaussians.means):
         raise ValueError("SceneBundle and Gaussian PLY counts do not match")
+    if not np.allclose(bundle.gaussians.means, gaussians.means, rtol=1e-6, atol=1e-7):
+        raise ValueError("SceneBundle and Gaussian PLY positions do not share one canonical world")
     # Exercise all semantic activations during load; invalid values fail before
     # the WebEngine receives the scene.
     activate_gaussians(gaussians.log_scales, gaussians.opacity_logits, gaussians.quats_wxyz)
 
+    source_to_scene = np.asarray(
+        bundle.manifest.normalization_transform.source_to_scene, dtype=np.float64
+    )
     points_file = Path(pointcloud_path).resolve() if pointcloud_path else None
+    pointcloud_bytes = None
     if points_file is not None:
-        try:
-            read_pointcloud_ply(points_file)
-        except PlyFormatError:
-            header = points_file.read_bytes()[: 1024 * 1024]
-            end = header.find(b"end_header\n")
-            required = (b"format binary_little_endian 1.0", b"property float x", b"property float y", b"property float z")
-            if end < 0 or any(item not in header[:end] for item in required):
-                raise ValueError("unsupported standard point-cloud PLY layout")
+        pointcloud_bytes = _canonical_pointcloud_bytes(
+            _read_compatible_pointcloud(points_file), source_to_scene
+        )
 
     camera_records: tuple[dict[str, Any], ...] = ()
     if camera_timeline:
@@ -193,6 +302,7 @@ def load_viewer_scene(
         bundle_path=bundle_file,
         gaussian_path=gaussian_file,
         pointcloud_path=points_file,
+        pointcloud_bytes=pointcloud_bytes,
         gaussian_count=int(len(gaussians.means)),
         camera_count=len(cameras),
         sh_degree=gaussians.sh_degree,
@@ -204,4 +314,8 @@ def load_viewer_scene(
         initial_camera_forward=initial_forward,
         initial_camera_up=initial_up,
         initial_focus_distance=initial_focus,
+        scene_root_transform=tuple(
+            tuple(float(value) for value in row) for row in SCENE_ROOT_TRANSFORM
+        ),
+        canonical_world_up=(0.0, 1.0, 0.0),
     )

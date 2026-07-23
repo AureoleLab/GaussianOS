@@ -8,7 +8,7 @@ if (-not (Test-Path (Join-Path $app.FullName 'GaussianOS.exe'))) { throw 'Portab
 if (-not (Test-Path (Join-Path $app.FullName 'runtime-manifest.json'))) { throw 'Portable archive does not contain runtime-manifest.json.' }
 $forbidden = Get-ChildItem $app.FullName -Recurse -File -Include *.ply,*.scene-bundle,*.pt,*.pth,*.ckpt,*.safetensors
 if ($forbidden) { throw "Core archive contains project data or model weights: $($forbidden.FullName -join ', ')" }
-& (Join-Path $app.FullName 'GaussianOS.exe') --doctor
-if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) { throw 'Portable executable failed its clean-directory doctor smoke check.' }
+$doctor = Start-Process -FilePath (Join-Path $app.FullName 'GaussianOS.exe') -ArgumentList '--doctor' -WorkingDirectory $app.FullName -Wait -PassThru
+if ($doctor.ExitCode -ne 0 -and $doctor.ExitCode -ne 2) { throw "Portable executable failed its clean-directory doctor smoke check ($($doctor.ExitCode))." }
 Remove-Item $scratch -Recurse -Force
 Write-Host 'Portable archive verification passed.'

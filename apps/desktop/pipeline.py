@@ -74,11 +74,13 @@ class RuntimePaths:
         factory = (portable_root / "runtime") if portable_root else (ROOT / ".gaussian-factory")
         bundled_ffmpeg = factory / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
         ffmpeg = str(bundled_ffmpeg) if bundled_ffmpeg.is_file() else (shutil.which("ffmpeg") or "ffmpeg")
+        map_env = factory / "envs" / "mapanything-1.1.2"
+        gsplat_env = factory / "envs" / "gsplat-1.5.3"
         return cls(
             colmap=factory / "tools" / "colmap" / "3.13.0" / "bin" / "colmap.exe",
             ffmpeg=ffmpeg,
-            map_python=factory / "envs" / "mapanything-1.1.2" / "Scripts" / "python.exe",
-            gsplat_python=factory / "envs" / "gsplat-1.5.3" / "Scripts" / "python.exe",
+            map_python=(map_env / "python.exe") if (map_env / "python.exe").is_file() else (map_env / "Scripts" / "python.exe"),
+            gsplat_python=(gsplat_env / "python.exe") if (gsplat_env / "python.exe").is_file() else (gsplat_env / "Scripts" / "python.exe"),
             gsplat_source=factory / "sources" / "gsplat-v1.5.3",
             map_source=factory / "sources" / "map-anything-v1.1.2",
             map_checkpoint=factory / "downloads" / "map-anything-apache-00f9c245" / "model.safetensors",

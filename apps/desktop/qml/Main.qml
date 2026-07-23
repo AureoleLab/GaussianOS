@@ -48,6 +48,9 @@ ApplicationWindow {
     property bool projectsExpanded: true
     property bool layoutReady: false
     property bool reducedMotion: false
+    property bool restoreLastProject: false
+    property string lastProjectId: ""
+    property string lastWorkingFolder: ""
     property bool leftPaneOpen: true
     property bool rightPaneOpen: true
     property bool timelineOpen: true
@@ -153,6 +156,23 @@ ApplicationWindow {
         event.accepted = true
     }
     function beginVideo(path) { prepareProSource(path); backend.beginVideoImport(path); modeDialog.open() }
+    function openRecentProject(projectId) {
+        lastProjectId = projectId
+        queueLayoutSave()
+        backend.selectProject(projectId)
+    }
+    function chooseProjectFolder() {
+        var candidate = projectRoot.text.trim() || lastWorkingFolder
+        if (candidate) projectFolderPicker.currentFolder = fileUrl(candidate)
+        projectFolderPicker.open()
+    }
+    function createProjectFromDialog() {
+        var root = projectRoot.text.trim()
+        lastWorkingFolder = root
+        queueLayoutSave()
+        backend.createProject(projectName.text.trim(), root)
+        projectDialog.accept()
+    }
     function openProAcceptance(path) { prepareProSource(path); acceptanceProPending = true; backend.beginVideoImport(path) }
     function applyProDraft() {
         backend.configureVideoImport(samplingModeId(proSamplingMode.currentIndex), proTarget.value,
@@ -195,6 +215,9 @@ ApplicationWindow {
         if (!state) return
         if (state.themeMode === "light" || state.themeMode === "dark" || state.themeMode === "system") themeMode = state.themeMode
         reducedMotion = state.reducedMotion === true
+        restoreLastProject = state.restoreLastProject === true
+        lastProjectId = String(state.lastProjectId || "")
+        lastWorkingFolder = String(state.lastWorkingFolder || "")
         leftPaneOpen = state.leftPaneOpen !== false
         rightPaneOpen = state.rightPaneOpen !== false
         timelineOpen = state.timelineOpen !== false
@@ -223,12 +246,16 @@ ApplicationWindow {
             console.warn("Could not restore workspace layout:", error)
         }
         layoutReady = true
+        if (restoreLastProject && lastProjectId) Qt.callLater(function() { backend.selectProject(lastProjectId) })
     }
     function saveLayout() {
         if (!layoutReady) return
         var state = {
             "themeMode": themeMode,
             "reducedMotion": reducedMotion,
+            "restoreLastProject": restoreLastProject,
+            "lastProjectId": lastProjectId,
+            "lastWorkingFolder": lastWorkingFolder,
             "leftPaneOpen": leftPaneOpen,
             "rightPaneOpen": rightPaneOpen,
             "timelineOpen": timelineOpen,
@@ -263,10 +290,18 @@ ApplicationWindow {
     }
     onThemeModeChanged: queueLayoutSave()
     onReducedMotionChanged: queueLayoutSave()
+    onRestoreLastProjectChanged: queueLayoutSave()
 
     Connections {
         target: backend
-        function onChanged() { current = JSON.parse(backend.currentJson || "{}"); viewerPlayhead = 0 }
+        function onChanged() {
+            current = JSON.parse(backend.currentJson || "{}")
+            if (current.project_id && current.project_id !== lastProjectId) {
+                lastProjectId = current.project_id
+                queueLayoutSave()
+            }
+            viewerPlayhead = 0
+        }
         function onImportChanged() {
             importDraft = JSON.parse(backend.importJson || "{}")
             if (easyPending && importDraft.status === "ready" && (importDraft.sampling || {}).analysis_status === "complete") {
@@ -327,6 +362,18 @@ ApplicationWindow {
         onAccepted: beginVideo(localPathFromUrl(selectedFile))
     }
     FolderDialog { id: folderPicker; title: "Import image folder"; onAccepted: backend.importInput(localPathFromUrl(selectedFolder)) }
+    FolderDialog {
+        id: projectFolderPicker
+        title: "Choose project working folder"
+        onAccepted: {
+            var selectedPath = localPathFromUrl(selectedFolder)
+            projectRoot.text = selectedPath
+            lastWorkingFolder = selectedPath
+            queueLayoutSave()
+            projectRoot.forceActiveFocus()
+            projectRoot.cursorPosition = projectRoot.text.length
+        }
+    }
 
     Dialog {
         id: projectDialog
@@ -335,6 +382,8 @@ ApplicationWindow {
         anchors.centerIn: parent
         width: 510
         padding: 0
+        onOpened: projectName.forceActiveFocus()
+        onClosed: { projectName.clear(); projectRoot.clear() }
         background: GfPanel { tokens: theme; raised: true }
         enter: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: theme.motionNormal } NumberAnimation { property: "scale"; from: 0.97; to: 1; duration: theme.motionSlow; easing.type: Easing.OutCubic } } }
         exit: Transition { ParallelAnimation { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: theme.motionFast } NumberAnimation { property: "scale"; from: 1; to: 0.98; duration: theme.motionFast } } }
@@ -346,13 +395,36 @@ ApplicationWindow {
             Text { text: "PROJECT NAME"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22; Layout.topMargin: 8 }
             GfTextField { id: projectName; tokens: theme; placeholderText: "My reconstruction"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
             Text { text: "WORKING FOLDER"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22 }
-            GfTextField { id: projectRoot; tokens: theme; placeholderText: "D:/Projects/my-scan"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; spacing: 8
+                GfTextField {
+                    id: projectRoot
+                    tokens: theme
+                    placeholderText: "D:/Projects/my-scan"
+                    Layout.fillWidth: true
+                    selectByMouse: true
+                    onAccepted: if (projectName.text.trim() !== "" && text.trim() !== "") createProjectFromDialog()
+                }
+                GfButton {
+                    tokens: theme
+                    text: "Browse…"
+                    toolTip: "Choose a folder in File Explorer"
+                    Layout.preferredWidth: 96
+                    onClicked: chooseProjectFolder()
+                }
+            }
+            Text {
+                text: "Type or paste a path, or choose an existing folder in File Explorer."
+                color: theme.textTertiary; font.pixelSize: theme.typeCaption
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap
+            }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider; Layout.topMargin: 10 }
             RowLayout {
                 Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
                 Item { Layout.fillWidth: true }
                 GfButton { tokens: theme; text: "Cancel"; onClicked: projectDialog.reject() }
-                GfButton { tokens: theme; text: "Create Project"; primary: true; enabled: projectName.text.trim() !== "" && projectRoot.text.trim() !== ""; onClicked: { backend.createProject(projectName.text, projectRoot.text); projectDialog.accept() } }
+                GfButton { tokens: theme; text: "Create Project"; primary: true; enabled: projectName.text.trim() !== "" && projectRoot.text.trim() !== ""; onClicked: createProjectFromDialog() }
             }
         }
     }
@@ -452,6 +524,13 @@ ApplicationWindow {
                 checked: window.reducedMotion
                 Layout.leftMargin: 22; Layout.rightMargin: 22
                 onToggled: window.reducedMotion = checked
+            }
+            Text { text: "STARTUP"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22 }
+            CheckBox {
+                text: "Restore last project at startup"
+                checked: window.restoreLastProject
+                Layout.leftMargin: 22; Layout.rightMargin: 22
+                onToggled: window.restoreLastProject = checked
             }
             GfButton { tokens: theme; text: "Reset Workspace Layout"; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.fillWidth: true; onClicked: resetLayout() }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
@@ -752,7 +831,7 @@ ApplicationWindow {
                             required property var modelData
                             width: projectList.width - 20; height: 54; hoverEnabled: true
                             highlighted: modelData.project_id === current.project_id
-                            onClicked: backend.selectProject(modelData.project_id)
+                            onClicked: openRecentProject(modelData.project_id)
                             background: Rectangle {
                                 radius: theme.radiusMedium
                                 color: highlighted ? theme.selectionStrong : hovered ? theme.controlHover : "transparent"

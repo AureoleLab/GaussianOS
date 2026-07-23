@@ -45,3 +45,5 @@ dist/*
 
 # Local Windows release artefacts; never commit package contents or model data.
 便携包/
+data/
+/GaussianOS.spec

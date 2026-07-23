@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .pipeline import PipelineController, STAGES, TERMINAL_STAGE_STATES
+from .pipeline import PipelineController, RuntimePaths, STAGES, TERMINAL_STAGE_STATES
 from .project_store import Project, ProjectStore
 from .viewer import ViewerScene, load_viewer_scene
 from .sampling import discover_ffprobe
@@ -59,23 +59,108 @@ def _qt():
 
 
 def main() -> int:
-    qt = _qt()
-    globals().update(qt)
+    from .portable import doctor, import_offline, install, manifest_path, prepare_environment
+
+    portable_data = prepare_environment()
     parser = argparse.ArgumentParser(description="Gaussian Factory P2 desktop GUI")
-    parser.add_argument("--projects", type=Path, default=Path.home() / ".gaussian-factory" / "projects")
-    parser.add_argument("--artifacts", type=Path, default=Path.home() / ".gaussian-factory" / "artifact-store")
+    default_state = portable_data if getattr(sys, "frozen", False) else Path.home() / ".gaussian-factory"
+    parser.add_argument("--projects", type=Path, default=default_state / "projects")
+    parser.add_argument("--artifacts", type=Path, default=default_state / "artifact-store")
     parser.add_argument("--acceptance-evidence", type=Path, help="capture a real rendered GUI after exercising viewer controls")
     parser.add_argument("--acceptance-delay-ms", type=int, default=12_000, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-import-video", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-import-pro", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-camera-timeline", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--doctor", action="store_true", help="check the portable runtime without starting the GUI")
+    parser.add_argument("--runtime-list", action="store_true", help="list locked portable runtime assets")
+    parser.add_argument("--runtime-install", action="append", default=[], metavar="ASSET_ID", help="download and verify a locked runtime asset")
+    parser.add_argument("--runtime-install-all", action="store_true", help="download every runtime asset that has an approved URL")
+    parser.add_argument("--runtime-import", type=Path, help="import a verified Full Offline runtime or locked asset directory")
+    parser.add_argument("--portable-smoke-video", type=Path, help="commit one analyzed video import without starting reconstruction")
+    parser.add_argument("--portable-smoke-output", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    operation_report = Path(sys.executable).resolve().parent / "runtime-operation-report.txt"
+    if args.runtime_list or args.runtime_install or args.runtime_install_all or args.runtime_import:
+        manifest = json.loads(manifest_path().read_text(encoding="utf-8"))
+        lines: list[str] = []
+        try:
+            if args.runtime_list:
+                for asset in manifest["assets"]:
+                    mode = "download" if asset.get("url") else "offline import only"
+                    lines.append(f"{asset['id']} {asset['version']} [{mode}]")
+            selected = list(args.runtime_install)
+            if args.runtime_install_all:
+                selected.extend(asset["id"] for asset in manifest["assets"] if asset.get("url"))
+            for asset_id in dict.fromkeys(selected):
+                def progress(name: str, done: int, total: int) -> None:
+                    current = lines + [f"Downloading {name}: {done}/{total} bytes"]
+                    operation_report.write_text("\n".join(current) + "\n", encoding="utf-8")
+                target = install(asset_id, progress)
+                lines.append(f"Installed and verified: {asset_id} -> {target}")
+            if args.runtime_import:
+                imported = import_offline(args.runtime_import)
+                if not imported:
+                    raise RuntimeError("No manifest-locked runtime assets were found in the selected directory.")
+                lines.extend(f"Imported and verified: {path}" for path in imported)
+            remaining = doctor()
+            lines.append("Runtime doctor: " + ("OK" if not remaining else f"{len(remaining)} issue(s) remain"))
+            operation_report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return 0
+        except Exception as exc:
+            lines.append(f"ERROR: {exc}")
+            operation_report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return 3
+    if args.portable_smoke_video:
+        output = (args.portable_smoke_output or (portable_data / "acceptance-smoke")).resolve()
+        report_path = output / "portable-smoke-report.txt"
+        session: VideoImportSession | None = None
+        try:
+            output.mkdir(parents=True, exist_ok=True)
+            runtime = RuntimePaths.discover()
+            session = VideoImportSession(
+                args.portable_smoke_video.resolve(), runtime.ffmpeg, discover_ffprobe(runtime.ffmpeg),
+            )
+            requested = min(12, session.probe.total_frames)
+            session.configure(
+                "target_count", requested, 1.0, "seconds", 0,
+                session.probe.total_frames - 1, "balanced",
+            )
+            analyzed = session.analyze()
+            store = ProjectStore(output / "projects")
+            controller = PipelineController(store, output / "artifacts", runtime=runtime)
+            workspace = output / "workspaces" / f"video-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            project = controller.create_project("portable-import-smoke", workspace)
+            committed = controller.commit_video_import(
+                project.project_id, session.source, "balanced", analyzed,
+            )
+            lines = [
+                "GaussianOS portable video import smoke: OK",
+                f"project_id={committed.project_id}",
+                f"status={committed.status}",
+                f"input_kind={committed.input_kind}",
+                f"input_path={committed.input_path}",
+                f"analysis_status={committed.sampling.get('analysis_status')}",
+                f"selected_frames={committed.sampling.get('selected_frame_count')}",
+                f"timeline_frames={len(committed.sampling.get('timeline', []))}",
+            ]
+            report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return 0
+        except Exception as exc:
+            output.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(f"GaussianOS portable video import smoke: FAILED\n{exc}\n", encoding="utf-8")
+            return 4
+        finally:
+            if session is not None:
+                session.cancel()
     if args.doctor:
-        from .portable import doctor
         messages = doctor()
-        print("GaussianOS runtime doctor: " + ("OK" if not messages else "\n- " + "\n- ".join(messages)))
+        report = "GaussianOS runtime doctor: " + ("OK" if not messages else "\n- " + "\n- ".join(messages))
+        print(report)
+        if getattr(sys, "frozen", False):
+            (Path(sys.executable).resolve().parent / "doctor-report.txt").write_text(report + "\n", encoding="utf-8")
         return 0 if not messages else 2
+    qt = _qt()
+    globals().update(qt)
     scheme = QWebEngineUrlScheme(b"gaussian")
     scheme.setSyntax(QWebEngineUrlScheme.Syntax.HostAndPort)
     scheme.setDefaultPort(80)
@@ -144,12 +229,14 @@ def main() -> int:
                     "initial_camera_forward": scene.initial_camera_forward,
                     "initial_camera_up": scene.initial_camera_up,
                     "initial_focus_distance": scene.initial_focus_distance,
+                    "scene_root_transform": scene.scene_root_transform,
+                    "canonical_world_up": scene.canonical_world_up,
                 }, separators=(",", ":")).encode()
                 self._reply_bytes(job, b"application/json", payload); return
             if path == "/scene.ply":
                 self._reply_file(job, scene.gaussian_path, b"application/octet-stream"); return
-            if path == "/points.ply" and scene.pointcloud_path is not None:
-                self._reply_file(job, scene.pointcloud_path, b"application/octet-stream"); return
+            if path == "/points.ply" and scene.pointcloud_bytes is not None:
+                self._reply_bytes(job, b"application/octet-stream", scene.pointcloud_bytes); return
             job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
 
     viewer_handler = ViewerSchemeHandler()
@@ -165,8 +252,10 @@ def main() -> int:
         def __init__(self) -> None:
             super().__init__()
             self.projects: list[Project] = store.all()
-            self.selected = self.projects[0].project_id if self.projects else ""
-            self.logs: list[str] = []
+            # Recent projects stay visible, but a normal launch starts at the
+            # Welcome surface until the user explicitly opens one.
+            self.selected = ""
+            self.logs: list[str] = [f"Runtime doctor: {message}" for message in doctor()]
             self.viewer_url = "about:blank"
             self.viewer_status = "Select a completed project to load its Gaussian artifact"
             self.viewer_generation = 0
@@ -541,7 +630,11 @@ def main() -> int:
     qml = Path(__file__).with_name("qml") / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml)))
     if not engine.rootObjects(): return 2
-    if backend.selected:
+    # Explicit acceptance capture is a diagnostic mode rather than a normal
+    # launch, so it may open the newest project to exercise the real Viewer.
+    if args.acceptance_evidence and backend.projects and not args.acceptance_import_video:
+        backend.selected = backend.projects[0].project_id
+        backend.changed.emit()
         backend.loadViewer()
     if args.acceptance_import_video:
         root = engine.rootObjects()[0]

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from apps.desktop.viewer import activate_gaussians, load_viewer_scene
-from packages.contracts import SphericalHarmonicsSpec
+from packages.contracts import NormalizationTransform, SphericalHarmonicsSpec
 from packages.exportkit import write_gaussian_ply, write_pointcloud_ply
 from packages.scene_bundle import write_scene_bundle
 
@@ -29,7 +29,48 @@ def test_viewer_loads_validated_bundle_ply_and_camera_track(tmp_path, manifest_f
     assert scene.camera_count == 2
     assert scene.sh_degree == 3
     assert scene.pointcloud_path == points.resolve()
+    assert scene.pointcloud_bytes is not None
+    assert scene.scene_root_transform == (
+        (1.0, 0.0, 0.0, 0.0),
+        (0.0, -1.0, 0.0, 0.0),
+        (0.0, 0.0, -1.0, 0.0),
+        (0.0, 0.0, 0.0, 1.0),
+    )
+    assert scene.canonical_world_up == (0.0, 1.0, 0.0)
     np.testing.assert_allclose(scene.bounds_min, np.quantile(gaussians.means, 0.01, axis=0))
+
+
+def test_viewer_canonicalizes_source_pointcloud_once_without_mutating_artifact(
+    tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud,
+):
+    gaussians = gaussian_factory(3)
+    transform = np.array(
+        [[2.0, 0.0, 0.0, -4.0], [0.0, 2.0, 0.0, 6.0], [0.0, 0.0, 2.0, 1.0], [0.0, 0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
+    manifest = manifest_factory(3).model_copy(update={
+        "normalization_transform": NormalizationTransform(
+            source_to_scene=tuple(tuple(float(value) for value in row) for row in transform)
+        )
+    })
+    bundle = tmp_path / "scene.scene-bundle"
+    ply = tmp_path / "scene.graphdeco-gs-v1.ply"
+    points = tmp_path / "scene.pointcloud.ply"
+    write_scene_bundle(bundle, manifest, cameras=cameras, gaussians=gaussians)
+    write_gaussian_ply(ply, gaussians, manifest.spherical_harmonics, color_space="linear_srgb")
+    write_pointcloud_ply(points, pointcloud)
+    original = points.read_bytes()
+
+    scene = load_viewer_scene(bundle, ply, points)
+
+    assert points.read_bytes() == original
+    assert scene.pointcloud_bytes is not None
+    header_end = scene.pointcloud_bytes.index(b"end_header\n") + len(b"end_header\n")
+    dtype = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("red", "u1"), ("green", "u1"), ("blue", "u1")])
+    vertices = np.frombuffer(scene.pointcloud_bytes[header_end:], dtype=dtype)
+    actual = np.column_stack([vertices[name] for name in ("x", "y", "z")])
+    homogeneous = np.column_stack([pointcloud.positions, np.ones(len(pointcloud.positions))])
+    np.testing.assert_allclose(actual, (homogeneous @ transform.T)[:, :3])
 
 
 def test_viewer_uses_only_registered_real_timeline_cameras(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud):
@@ -107,6 +148,11 @@ def test_web_viewer_exposes_real_camera_and_free_view_bridge() -> None:
     assert "cameraProjection(currentCamera)" in html
     assert "currentCamera.width/currentCamera.height" in html
     assert "highlightCamera(rec)" in html
+    assert "uniform mat4 sceneRoot,view,proj" in html
+    assert "gl.uniformMatrix4fv(gl.getUniformLocation(lineP,'sceneRoot')" in html
+    assert "gl.uniformMatrix4fv(gl.getUniformLocation(splatP,'sceneRoot')" in html
+    assert "rollDot:dot(c.r,worldUp)" in html
+    assert "worldUp=norm(meta.initial_camera_up)" not in html
 
 
 def test_qml_file_urls_support_string_drop_payloads() -> None:
