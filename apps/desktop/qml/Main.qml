@@ -41,8 +41,12 @@ ApplicationWindow {
     property string timelineFilter: "All"
     property real timelineScale: 1.0
     property int viewerPlayhead: 0
+    property int activeProjectGeneration: 0
     property string timelineMessage: ""
     property string timelinePreviewSource: ""
+    property string deleteProjectId: ""
+    property string deleteProjectName: ""
+    property bool deleteProjectLegacy: false
     property bool logsOpen: true
     property bool viewerLogsOpen: false
     property bool projectsExpanded: true
@@ -173,6 +177,12 @@ ApplicationWindow {
         backend.createProject(projectName.text.trim(), root)
         projectDialog.accept()
     }
+    function requestProjectDelete(project) {
+        deleteProjectId = String(project.project_id || "")
+        deleteProjectName = String(project.name || "")
+        deleteProjectLegacy = project.legacy_workspace === true
+        deleteProjectDialog.open()
+    }
     function openProAcceptance(path) { prepareProSource(path); acceptanceProPending = true; backend.beginVideoImport(path) }
     function applyProDraft() {
         backend.configureVideoImport(samplingModeId(proSamplingMode.currentIndex), proTarget.value,
@@ -295,12 +305,21 @@ ApplicationWindow {
     Connections {
         target: backend
         function onChanged() {
-            current = JSON.parse(backend.currentJson || "{}")
+            var next = JSON.parse(backend.currentJson || "{}")
+            var switched = Number(next.ui_generation || 0) !== activeProjectGeneration
+            current = next
+            activeProjectGeneration = Number(next.ui_generation || 0)
             if (current.project_id && current.project_id !== lastProjectId) {
                 lastProjectId = current.project_id
                 queueLayoutSave()
             }
-            viewerPlayhead = 0
+            if (switched) {
+                viewerPlayback.stop()
+                viewerPlayhead = 0
+                timelineFilter = "All"
+                timelineMessage = ""
+                timelinePreviewSource = ""
+            }
         }
         function onImportChanged() {
             importDraft = JSON.parse(backend.importJson || "{}")
@@ -364,7 +383,7 @@ ApplicationWindow {
     FolderDialog { id: folderPicker; title: "Import image folder"; onAccepted: backend.importInput(localPathFromUrl(selectedFolder)) }
     FolderDialog {
         id: projectFolderPicker
-        title: "Choose project working folder"
+        title: "Choose project library folder"
         onAccepted: {
             var selectedPath = localPathFromUrl(selectedFolder)
             projectRoot.text = selectedPath
@@ -391,10 +410,10 @@ ApplicationWindow {
             spacing: theme.space12
             Item { Layout.fillWidth: true; Layout.preferredHeight: 12 }
             Text { text: "Create a new project"; color: theme.text; font.pixelSize: 18; font.weight: Font.DemiBold; Layout.leftMargin: 22 }
-            Text { text: "Choose a name and a working folder for generated files."; color: theme.textSecondary; font.pixelSize: theme.typeBody; Layout.leftMargin: 22 }
+            Text { text: "Choose a name and a library. GaussianOS creates a unique internal folder for this project."; color: theme.textSecondary; font.pixelSize: theme.typeBody; Layout.leftMargin: 22 }
             Text { text: "PROJECT NAME"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22; Layout.topMargin: 8 }
             GfTextField { id: projectName; tokens: theme; placeholderText: "My reconstruction"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
-            Text { text: "WORKING FOLDER"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22 }
+            Text { text: "PROJECT LIBRARY"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22 }
             RowLayout {
                 Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; spacing: 8
                 GfTextField {
@@ -408,13 +427,13 @@ ApplicationWindow {
                 GfButton {
                     tokens: theme
                     text: "Browse…"
-                    toolTip: "Choose a folder in File Explorer"
+                    toolTip: "Choose a project library in File Explorer"
                     Layout.preferredWidth: 96
                     onClicked: chooseProjectFolder()
                 }
             }
             Text {
-                text: "Type or paste a path, or choose an existing folder in File Explorer."
+                text: "Projects in the same library remain physically isolated by project ID."
                 color: theme.textTertiary; font.pixelSize: theme.typeCaption
                 Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
                 wrapMode: Text.Wrap
@@ -425,6 +444,55 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
                 GfButton { tokens: theme; text: "Cancel"; onClicked: projectDialog.reject() }
                 GfButton { tokens: theme; text: "Create Project"; primary: true; enabled: projectName.text.trim() !== "" && projectRoot.text.trim() !== ""; onClicked: createProjectFromDialog() }
+            }
+        }
+    }
+
+    Dialog {
+        id: deleteProjectDialog
+        title: "Move project to trash"
+        modal: true
+        anchors.centerIn: parent
+        width: 500
+        padding: 0
+        onClosed: {
+            deleteProjectId = ""
+            deleteProjectName = ""
+            deleteProjectLegacy = false
+        }
+        background: GfPanel { tokens: theme; raised: true }
+        contentItem: ColumnLayout {
+            spacing: theme.space16
+            Item { Layout.fillWidth: true; Layout.preferredHeight: 10 }
+            Text {
+                text: "Move “" + deleteProjectName + "” to trash?"
+                color: theme.text; font.pixelSize: 18; font.weight: Font.DemiBold
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap
+            }
+            Text {
+                text: deleteProjectLegacy
+                    ? "This is a legacy/shared workspace. GaussianOS will remove only its project metadata and preserve every shared file."
+                    : "The isolated project directory will be moved to GaussianOS trash. This is not a permanent deletion."
+                color: deleteProjectLegacy ? theme.warning : theme.textSecondary
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap; lineHeight: 1.4
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
+                Item { Layout.fillWidth: true }
+                GfButton { tokens: theme; text: "Cancel"; onClicked: deleteProjectDialog.reject() }
+                GfButton {
+                    tokens: theme
+                    text: "Move to Trash"
+                    primary: true
+                    onClicked: {
+                        var target = deleteProjectId
+                        deleteProjectDialog.accept()
+                        backend.deleteProject(target)
+                    }
+                }
             }
         }
     }
@@ -848,6 +916,15 @@ ApplicationWindow {
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
                                     Text { Layout.fillWidth: true; text: modelData.name; color: theme.text; font.weight: Font.DemiBold; font.pixelSize: theme.typeBody; elide: Text.ElideRight }
                                     Text { text: modelData.status.toUpperCase() + "  ·  " + Math.round((modelData.progress || 0) * 100) + "%"; color: statusColor(modelData.status); font.pixelSize: theme.typeCaption }
+                                }
+                                GfButton {
+                                    tokens: theme
+                                    text: "Delete"
+                                    quiet: true
+                                    compact: true
+                                    enabled: modelData.status !== "running"
+                                    toolTip: modelData.status === "running" ? "Cancel and wait before deleting" : "Move project to GaussianOS trash"
+                                    onClicked: requestProjectDelete(modelData)
                                 }
                                 Text { text: highlighted ? "›" : ""; color: theme.textSecondary; font.pixelSize: 18 }
                             }

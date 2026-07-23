@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from .pipeline import PipelineController, RuntimePaths, STAGES, TERMINAL_STAGE_STATES
-from .project_store import Project, ProjectStore
+from .project_store import (
+    Project,
+    ProjectDeleteError,
+    ProjectStore,
+    ProjectStoreError,
+)
+from .project_session import AsyncIdentity, ProjectSession
 from .viewer import ViewerScene, load_viewer_scene
 from .sampling import discover_ffprobe
 from .video_import import VideoImportSession
@@ -42,6 +48,9 @@ def project_view(project: Project) -> dict[str, Any]:
     sampling = value.setdefault("sampling", {})
     if sampling.get("camera_timeline"):
         sampling["timeline"] = sampling["camera_timeline"]
+    value["legacy_shared_workspace"] = project.workspace_kind == "legacy_shared"
+    value["legacy_workspace"] = project.workspace_kind != "isolated"
+    value["internal_workspace"] = project.root
     return value
 
 
@@ -193,6 +202,9 @@ def main() -> int:
         def set_scene(self, scene: ViewerScene) -> None:
             self.scene = scene
 
+        def clear_scene(self) -> None:
+            self.scene = None
+
         def _reply_bytes(self, job: QWebEngineUrlRequestJob, mime: bytes, data: bytes) -> None:
             device = QBuffer(self)
             device.setData(QByteArray(data)); device.open(QIODevice.OpenModeFlag.ReadOnly)
@@ -254,11 +266,11 @@ def main() -> int:
             self.projects: list[Project] = store.all()
             # Recent projects stay visible, but a normal launch starts at the
             # Welcome surface until the user explicitly opens one.
-            self.selected = ""
+            self.session = ProjectSession()
             self.logs: list[str] = [f"Runtime doctor: {message}" for message in doctor()]
             self.viewer_url = "about:blank"
             self.viewer_status = "Select a completed project to load its Gaussian artifact"
-            self.viewer_generation = 0
+            self.viewer_revision = 0
             self.persistence_failed: set[str] = set()
             self.acceptance_started = False
             self.sampling_analysis: set[str] = set()
@@ -266,10 +278,48 @@ def main() -> int:
             self.import_state: dict[str, Any] = {}
             self.import_analysis_running = False
             self.import_generation = 0
+            self.import_target_project_id = ""
+            self.import_target_generation = 0
 
         def _project(self) -> Project | None:
-            try: return store.load(self.selected) if self.selected else None
-            except FileNotFoundError: return None
+            try:
+                return store.load(self.session.project_id) if self.session.project_id else None
+            except (FileNotFoundError, ProjectStoreError):
+                return None
+
+        def _identity(
+            self,
+            project: Project,
+            stage: str,
+            *,
+            run_id: str | None = None,
+            generation: int | None = None,
+        ) -> dict[str, Any]:
+            return AsyncIdentity(
+                project_id=project.project_id,
+                run_id=run_id,
+                generation=self.session.generation if generation is None else generation,
+                stage=stage,
+            ).payload()
+
+        def _clear_project_presentation(self, status: str) -> None:
+            viewer_handler.clear_scene()
+            self.viewer_url = "about:blank"
+            self.viewer_status = status
+            self.viewerUrlChanged.emit()
+            self.viewerStatusChanged.emit()
+
+        def _activate_project(self, project_id: str, *, load_viewer: bool = True) -> None:
+            project = store.load(project_id) if project_id else None
+            self.session.switch(project_id)
+            self._clear_project_presentation(
+                "Validating project artifacts…"
+                if project is not None
+                else "Select a completed project to load its Gaussian artifact"
+            )
+            self._refresh()
+            if project is not None and load_viewer:
+                self.loadViewer()
 
         @Property(str, notify=changed)
         def projectsJson(self) -> str:
@@ -283,6 +333,7 @@ def main() -> int:
         def currentJson(self) -> str:
             current = self._project()
             value = self._decorate(current) if current else {}
+            value["ui_generation"] = self.session.generation
             if value.get("project_id") in self.persistence_failed:
                 value["status"] = "failed"
             return json.dumps(value, ensure_ascii=False)
@@ -309,6 +360,8 @@ def main() -> int:
         def beginVideoImport(self, source: str) -> None:
             self.import_generation += 1
             generation = self.import_generation
+            self.import_target_project_id = self.session.project_id
+            self.import_target_generation = self.session.generation
             if self.import_session is not None:
                 self.import_session.cancel()
             self.import_session = None
@@ -324,7 +377,7 @@ def main() -> int:
                     )
                     self.event.emit("import_preflight_ready", "Video preflight completed", {"session": session, "generation": generation})
                 except Exception as exc:
-                    self.event.emit("import_preflight_failed", str(exc), {})
+                    self.event.emit("import_preflight_failed", str(exc), {"generation": generation})
 
             threading.Thread(target=preflight, name="video-import-preflight", daemon=True).start()
 
@@ -351,6 +404,7 @@ def main() -> int:
             if self.import_analysis_running:
                 return
             self.import_analysis_running = True
+            generation = self.import_generation
 
             def analyze_latest() -> None:
                 while self.import_session is session and not session.cancelled:
@@ -359,9 +413,13 @@ def main() -> int:
                     except InterruptedError:
                         continue
                     except Exception as exc:
-                        self.event.emit("import_analysis_failed", str(exc), {})
+                        self.event.emit("import_analysis_failed", str(exc), {"generation": generation})
                         return
-                    self.event.emit("import_analysis_ready", "Video analysis completed", {"sampling": analyzed})
+                    self.event.emit(
+                        "import_analysis_ready",
+                        "Video analysis completed",
+                        {"sampling": analyzed, "generation": generation},
+                    )
                     return
 
             threading.Thread(target=analyze_latest, name="video-import-analysis", daemon=True).start()
@@ -374,6 +432,7 @@ def main() -> int:
             self.import_session = None
             self.import_state = {}
             self.import_analysis_running = False
+            self.import_target_project_id = ""
             self.importChanged.emit()
 
         @Slot()
@@ -383,7 +442,23 @@ def main() -> int:
                 self.import_state["error"] = "Generate waits for the current analysis to complete"
                 self.importChanged.emit()
                 return
-            project = self._project()
+            if (
+                self.import_target_project_id
+                and (
+                    self.session.project_id != self.import_target_project_id
+                    or self.session.generation != self.import_target_generation
+                )
+            ):
+                self.import_state["error"] = (
+                    "The active project changed during import; reopen the import for the current project."
+                )
+                self.importChanged.emit()
+                return
+            project = (
+                store.load(self.import_target_project_id)
+                if self.import_target_project_id
+                else None
+            )
             if project is None:
                 stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                 root = args.projects.resolve().parent / "workspaces" / f"{session.source.stem}-{stamp}"
@@ -397,13 +472,13 @@ def main() -> int:
                 self.import_state["error"] = str(exc)
                 self.importChanged.emit()
                 return
-            self.selected = committed.project_id
             session.cancel()
             self.import_session = None
             self.import_state = {}
             self.import_analysis_running = False
+            self.import_target_project_id = ""
             self.importChanged.emit()
-            self._refresh()
+            self._activate_project(committed.project_id, load_viewer=False)
             self.start()
 
         @staticmethod
@@ -420,29 +495,38 @@ def main() -> int:
                 self.logs.append("Project name and location are required")
             else:
                 project = controller.create_project(name.strip(), root)
-                self.selected = project.project_id
                 self.logs.append(f"Created project {project.name}")
+                self._activate_project(project.project_id)
+                return
             self._refresh()
 
         @Slot(str)
         def selectProject(self, project_id: str) -> None:
-            self.selected = project_id
-            self._refresh()
-            self.loadViewer()
+            try:
+                self._activate_project(project_id)
+            except Exception as exc:
+                self.logs.append(f"Project switch failed: {exc}")
+                self.changed.emit()
 
         @Slot(str)
         def importInput(self, source: str) -> None:
             project = self._project()
             if project is None: return
             project_id = project.project_id
+            generation = self.session.generation
+            identity = self._identity(project, "ingest", generation=generation)
             self.logs.append(f"Probing input: {source}")
             self.changed.emit()
             def import_source() -> None:
                 try:
                     controller.import_input(project_id, source)
-                    self.event.emit("input_ready", f"Imported and probed {source}", {"project_id": project_id})
+                    self.event.emit(
+                        "input_ready",
+                        f"Imported and probed {source}",
+                        identity,
+                    )
                 except Exception as exc:
-                    self.event.emit("input_failed", str(exc), {"project_id": project_id})
+                    self.event.emit("input_failed", str(exc), identity)
             threading.Thread(target=import_source, name=f"input-probe-{project_id[:8]}", daemon=True).start()
 
         @Slot(str)
@@ -475,15 +559,24 @@ def main() -> int:
             if project is None or project.input_kind != "video" or project.project_id in self.sampling_analysis:
                 return
             project_id = project.project_id
+            generation = self.session.generation
+            identity = self._identity(project, "timeline", generation=generation)
             self.sampling_analysis.add(project_id)
             self.logs.append("Frame analysis queued")
             self.changed.emit()
             def analyze() -> None:
                 try:
                     analyzed = controller.analyze_sampling(project_id)
-                    self.event.emit("sampling_ready", "Frame analysis completed", {"project_id": project_id, "selected": analyzed.sampling.get("selected_frame_count", 0)})
+                    self.event.emit(
+                        "sampling_ready",
+                        "Frame analysis completed",
+                        {
+                            **identity,
+                            "selected": analyzed.sampling.get("selected_frame_count", 0),
+                        },
+                    )
                 except Exception as exc:
-                    self.event.emit("sampling_failed", str(exc), {"project_id": project_id})
+                    self.event.emit("sampling_failed", str(exc), identity)
             threading.Thread(target=analyze, name=f"sampling-{project_id[:8]}", daemon=True).start()
 
         @Slot()
@@ -491,41 +584,159 @@ def main() -> int:
             project = self._project()
             if project is None or project.status == "running": return
             self.persistence_failed.discard(project.project_id)
+            project_id = project.project_id
+            generation = self.session.switch(project_id)
+            run_id = controller.new_run_id(project_id)
+            self.session.begin_run(project_id, run_id)
+            self._clear_project_presentation("Pipeline is preparing a new project run…")
             def receive(kind: str, message: str, payload: dict[str, Any]) -> None:
                 self.event.emit(kind, message, payload)
             def run() -> None:
-                controller.run(project.project_id, receive)
-                self.event.emit("complete", "Pipeline finished", {"project_id": project.project_id})
-            threading.Thread(target=run, name=f"gaussian-run-{project.project_id[:8]}", daemon=True).start()
+                identity = AsyncIdentity(project_id, run_id, generation, "pipeline").payload()
+                try:
+                    completed = controller.run(
+                        project_id,
+                        receive,
+                        run_id=run_id,
+                        generation=generation,
+                    )
+                    self.event.emit(
+                        "complete",
+                        "Pipeline finished",
+                        {**identity, "status": completed.status},
+                    )
+                except Exception as exc:
+                    self.event.emit("run_failed", str(exc), identity)
+            threading.Thread(target=run, name=f"gaussian-run-{project_id[:8]}", daemon=True).start()
             self.logs.append("Pipeline queued")
             self._refresh()
 
         @Slot()
         def cancel(self) -> None:
-            if self.selected: controller.cancel(self.selected)
+            if self.session.project_id:
+                self.session.cancel_run(self.session.project_id)
+                controller.cancel(self.session.project_id)
             self.logs.append("Cancellation requested")
             self.changed.emit()
 
         @Slot()
         def loadViewer(self) -> None:
             project = self._project()
-            if project is None: return
+            if project is None:
+                self._clear_project_presentation(
+                    "Select a completed project to load its Gaussian artifact"
+                )
+                return
+            generation = self.session.generation
+            project_id = project.project_id
+            run_id = project.run_id
+            self._clear_project_presentation(
+                "Loading and validating Gaussian artifact…"
+            )
             state = project.stages.get("validate")
-            if state and len(state.artifact_paths) >= 2:
+            export_state = project.stages.get("export")
+            if (
+                project.status == "succeeded"
+                and state
+                and state.status == "succeeded"
+                and export_state
+                and export_state.status == "succeeded"
+                and len(state.artifact_paths) >= 2
+            ):
                 bundle, gaussian = state.artifact_paths[:2]
-                pointcloud = next((p for p in project.stages.get("export", type(state)()).artifact_paths if p.endswith(".pointcloud.ply")), None)
-                self.viewer_status = "Loading and validating Gaussian artifact…"
-                self.viewerStatusChanged.emit()
+                pointcloud = next(
+                    (
+                        path
+                        for path in export_state.artifact_paths
+                        if path.endswith(".pointcloud.ply")
+                    ),
+                    None,
+                )
+                timeline = project.sampling.get("camera_timeline", [])
+                try:
+                    paths = store.paths(project)
+                    if project.workspace_kind == "isolated":
+                        receipt = json.loads(
+                            paths.viewer_manifest.read_text(encoding="utf-8")
+                        )
+                        if (
+                            receipt.get("schema_version")
+                            != "gaussianos-viewer-scene/v1"
+                            or receipt.get("project_id") != project_id
+                            or receipt.get("run_id") != run_id
+                            or receipt.get("committed") is not True
+                            or receipt.get("bundle") != bundle
+                            or receipt.get("gaussian") != gaussian
+                        ):
+                            raise ValueError(
+                                "viewer receipt does not match the active project run"
+                            )
+                        for candidate in (bundle, gaussian, receipt.get("pointcloud")):
+                            if candidate and not paths.contains(candidate):
+                                raise ValueError(
+                                    "viewer artifact is outside the owning project workspace"
+                                )
+                        pointcloud = receipt.get("pointcloud")
+                        if not run_id:
+                            raise ValueError("isolated viewer artifact has no run identity")
+                        timeline_receipt = json.loads(
+                            paths.run(run_id).timeline_manifest.read_text(
+                                encoding="utf-8"
+                            )
+                        )
+                        if (
+                            timeline_receipt.get("project_id") != project_id
+                            or timeline_receipt.get("run_id") != run_id
+                            or timeline_receipt.get("stage") != "timeline"
+                        ):
+                            raise ValueError(
+                                "camera timeline does not belong to the active project run"
+                            )
+                        timeline = timeline_receipt.get("records", [])
+                except Exception as exc:
+                    self.viewer_status = f"Viewer ownership validation failed: {exc}"
+                    self.viewerStatusChanged.emit()
+                    return
+
                 def load() -> None:
                     try:
-                        timeline = project.sampling.get("camera_timeline", [])
-                        if project.sampling.get("camera_mapping_stale"):
-                            timeline = []
-                        scene = load_viewer_scene(bundle, gaussian, pointcloud, timeline)
-                        self.event.emit("viewer_ready", "Viewer artifact validated", {"scene": scene})
+                        selected_timeline = (
+                            []
+                            if project.sampling.get("camera_mapping_stale")
+                            else timeline
+                        )
+                        scene = load_viewer_scene(
+                            bundle,
+                            gaussian,
+                            pointcloud,
+                            selected_timeline,
+                            project_id=project_id,
+                            run_id=run_id,
+                            generation=generation,
+                        )
+                        self.event.emit(
+                            "viewer_ready",
+                            "Viewer artifact validated",
+                            {
+                                **AsyncIdentity(
+                                    project_id, run_id, generation, "viewer"
+                                ).payload(),
+                                "scene": scene,
+                            },
+                        )
                     except Exception as exc:
-                        self.event.emit("viewer_failed", str(exc), {})
-                threading.Thread(target=load, name="gaussian-viewer-load", daemon=True).start()
+                        self.event.emit(
+                            "viewer_failed",
+                            str(exc),
+                            AsyncIdentity(
+                                project_id, run_id, generation, "viewer"
+                            ).payload(),
+                        )
+                threading.Thread(
+                    target=load,
+                    name=f"gaussian-viewer-load-{project_id[:8]}",
+                    daemon=True,
+                ).start()
             else:
                 self.viewer_status = "Run the pipeline to create a viewable Gaussian artifact"
                 self.viewerStatusChanged.emit()
@@ -533,11 +744,50 @@ def main() -> int:
         @Slot()
         def openExportFolder(self) -> None:
             project = self._project()
-            if project is not None:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(project.root) / "exports")))
+            if project is not None and project.run_id:
+                destination = store.paths(project).run(project.run_id).exports
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
+
+        @Slot(str)
+        def deleteProject(self, project_id: str) -> None:
+            try:
+                target = store.load(project_id)
+                if target.status == "running":
+                    raise ProjectDeleteError(
+                        "Running projects cannot be deleted; cancel and wait first."
+                    )
+                deleted = store.delete(project_id)
+            except Exception as exc:
+                self.logs.append(f"Project delete blocked: {exc}")
+                self._refresh()
+                return
+            self.logs.append(
+                f"Moved project {target.name} to GaussianOS trash"
+                + (
+                    "; legacy workspace files were preserved"
+                    if deleted.legacy_workspace_preserved
+                    else ""
+                )
+            )
+            self.persistence_failed.discard(project_id)
+            self.sampling_analysis.discard(project_id)
+            if self.session.remove_project(project_id):
+                self._clear_project_presentation(
+                    "Select a completed project to load its Gaussian artifact"
+                )
+                self._refresh()
+            else:
+                self._refresh()
 
         @Slot(str)
         def viewerPageTitle(self, title: str) -> None:
+            scene = viewer_handler.scene
+            if (
+                scene is None
+                or scene.project_id != self.session.project_id
+                or scene.generation != self.session.generation
+            ):
+                return
             if title.startswith("ready|"):
                 self.logs.append(f"Viewer GPU page ready: {title.partition('|')[2]} Gaussians")
                 if args.acceptance_evidence and not self.acceptance_started:
@@ -575,49 +825,93 @@ def main() -> int:
         @Slot(str, str, object)
         def handleEvent(self, kind: str, message: str, payload: object) -> None:
             """Queued Qt slot: all QML-facing updates remain on the GUI thread."""
+            data = payload if isinstance(payload, dict) else {}
+
+            if kind.startswith("import_"):
+                if data.get("generation") != self.import_generation:
+                    session = data.get("session")
+                    if isinstance(session, VideoImportSession):
+                        session.cancel()
+                    return
+                self.logs.append(f"{kind}: {message}")
+                if kind == "import_preflight_ready":
+                    session = data.get("session")
+                    if isinstance(session, VideoImportSession):
+                        self.import_session = session
+                        self.import_state.update({
+                            "source": str(session.source), "status": "ready",
+                            "profile": session.profile, "sampling": session.snapshot(),
+                        })
+                        self.importChanged.emit()
+                elif kind == "import_preflight_failed":
+                    self.import_state.update({"status": "failed", "error": message})
+                    self.importChanged.emit()
+                elif kind == "import_analysis_ready":
+                    self.import_analysis_running = False
+                    self.import_state.update({
+                        "status": "ready", "sampling": data.get("sampling", {})
+                    })
+                    self.importChanged.emit()
+                elif kind == "import_analysis_failed":
+                    self.import_analysis_running = False
+                    self.import_state.update({"status": "failed", "error": message})
+                    self.importChanged.emit()
+                return
+
+            project_id = data.get("project_id")
+            run_id = data.get("run_id")
+            if isinstance(project_id, str):
+                if kind in {"sampling_ready", "sampling_failed"}:
+                    self.sampling_analysis.discard(project_id)
+                if kind in {"complete", "run_failed"} and isinstance(run_id, str):
+                    self.session.finish_run(project_id, run_id)
+                accepted = self.session.accepts(data)
+                if accepted and isinstance(run_id, str) and kind != "run_failed":
+                    try:
+                        accepted = store.load(project_id).run_id == run_id
+                    except ProjectStoreError:
+                        accepted = False
+                if not accepted:
+                    self.projects = store.all()
+                    self.changed.emit()
+                    return
+                if data.get("stage") not in {
+                    *STAGES, "pipeline", "viewer", "timeline", "ingest"
+                }:
+                    return
+
             self.logs.append(f"{kind}: {message}")
-            if kind == "persistence_failed" and isinstance(payload, dict):
-                project_id = payload.get("project_id")
-                if isinstance(project_id, str): self.persistence_failed.add(project_id)
-            elif kind == "viewer_ready" and isinstance(payload, dict) and isinstance(payload.get("scene"), ViewerScene):
-                scene = payload["scene"]
+            if kind == "persistence_failed" and isinstance(project_id, str):
+                self.persistence_failed.add(project_id)
+            elif kind == "viewer_ready" and isinstance(data.get("scene"), ViewerScene):
+                scene = data["scene"]
+                if (
+                    scene.project_id != self.session.project_id
+                    or scene.run_id != run_id
+                    or scene.generation != self.session.generation
+                ):
+                    return
                 viewer_handler.set_scene(scene)
-                self.viewer_generation += 1
-                self.viewer_url = f"gaussian://viewer/index.html?v={self.viewer_generation}"
+                self.session.viewer_project_id = scene.project_id
+                self.session.viewer_run_id = scene.run_id
+                self.viewer_revision += 1
+                self.viewer_url = f"gaussian://viewer/index.html?v={self.viewer_revision}"
                 self.viewer_status = f"Loaded {scene.gaussian_count:,} Gaussians · SH degree {scene.sh_degree}"
                 self.viewerUrlChanged.emit()
                 self.viewerStatusChanged.emit()
             elif kind == "viewer_failed":
+                viewer_handler.clear_scene()
                 self.viewer_url = "about:blank"
                 self.viewer_status = f"Viewer load failed: {message}"
                 self.viewerUrlChanged.emit()
                 self.viewerStatusChanged.emit()
-            elif kind in {"sampling_ready", "sampling_failed"} and isinstance(payload, dict):
-                project_id = payload.get("project_id")
-                if isinstance(project_id, str): self.sampling_analysis.discard(project_id)
-            elif kind == "import_preflight_ready" and isinstance(payload, dict):
-                session = payload.get("session")
-                if payload.get("generation") != self.import_generation:
-                    if isinstance(session, VideoImportSession):
-                        session.cancel()
-                elif isinstance(session, VideoImportSession):
-                    self.import_session = session
-                    self.import_state.update({
-                        "source": str(session.source), "status": "ready",
-                        "profile": session.profile, "sampling": session.snapshot(),
-                    })
-                    self.importChanged.emit()
-            elif kind == "import_preflight_failed":
-                self.import_state.update({"status": "failed", "error": message})
-                self.importChanged.emit()
-            elif kind == "import_analysis_ready" and isinstance(payload, dict):
-                self.import_analysis_running = False
-                self.import_state.update({"status": "ready", "sampling": payload.get("sampling", {})})
-                self.importChanged.emit()
-            elif kind == "import_analysis_failed":
-                self.import_analysis_running = False
-                self.import_state.update({"status": "failed", "error": message})
-                self.importChanged.emit()
+            elif kind == "complete":
+                self._refresh()
+                if data.get("status") == "succeeded":
+                    self.loadViewer()
+                return
+            elif kind == "run_failed":
+                self._clear_project_presentation(f"Pipeline could not start: {message}")
             self._refresh()
 
     QQuickWebEngineProfile.defaultProfile().installUrlSchemeHandler(b"gaussian", viewer_handler)
@@ -633,9 +927,7 @@ def main() -> int:
     # Explicit acceptance capture is a diagnostic mode rather than a normal
     # launch, so it may open the newest project to exercise the real Viewer.
     if args.acceptance_evidence and backend.projects and not args.acceptance_import_video:
-        backend.selected = backend.projects[0].project_id
-        backend.changed.emit()
-        backend.loadViewer()
+        backend._activate_project(backend.projects[0].project_id)
     if args.acceptance_import_video:
         root = engine.rootObjects()[0]
         method = root.openProAcceptance if args.acceptance_import_pro else root.beginVideo

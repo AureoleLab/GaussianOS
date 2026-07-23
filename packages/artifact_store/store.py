@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 from uuid import uuid4
 
+from packages.file_lock import FileLock, ProjectLockError
 from packages.plugin_sdk import ArtifactManifest
 
 
@@ -292,31 +293,29 @@ class ArtifactStore:
             return tuple(records)
         finally:
             for lock in reversed(locks):
-                try:
-                    lock.rmdir()
-                except OSError:
-                    pass
+                lock.release()
 
     def _acquire_commit_locks(
         self, manifests: Sequence[ArtifactManifest]
-    ) -> tuple[Path, ...]:
-        acquired: list[Path] = []
+    ) -> tuple[FileLock, ...]:
+        acquired: list[FileLock] = []
         try:
             for artifact_id in sorted(manifest.artifact_id for manifest in manifests):
-                lock = self.commit_locks_root / artifact_id
+                lock = FileLock(
+                    self.commit_locks_root / f"{artifact_id}.lock",
+                    operation="artifact-commit",
+                    project_id=artifact_id,
+                )
                 try:
-                    lock.mkdir()
-                except FileExistsError as exc:
+                    lock.acquire()
+                except ProjectLockError as exc:
                     raise ArtifactConflictError(
                         f"artifact commit is already in progress: {artifact_id}"
                     ) from exc
                 acquired.append(lock)
         except Exception:
             for lock in reversed(acquired):
-                try:
-                    lock.rmdir()
-                except OSError:
-                    pass
+                lock.release()
             raise
         return tuple(acquired)
 

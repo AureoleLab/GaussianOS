@@ -24,7 +24,14 @@ def _scene(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud):
 
 def test_viewer_loads_validated_bundle_ply_and_camera_track(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud):
     bundle, ply, points, gaussians = _scene(tmp_path, manifest_factory, gaussian_factory, cameras, pointcloud)
-    scene = load_viewer_scene(bundle, ply, points)
+    scene = load_viewer_scene(
+        bundle,
+        ply,
+        points,
+        project_id="project-a",
+        run_id="run-a",
+        generation=7,
+    )
     assert scene.gaussian_count == len(gaussians.means)
     assert scene.camera_count == 2
     assert scene.sh_degree == 3
@@ -37,6 +44,10 @@ def test_viewer_loads_validated_bundle_ply_and_camera_track(tmp_path, manifest_f
         (0.0, 0.0, 0.0, 1.0),
     )
     assert scene.canonical_world_up == (0.0, 1.0, 0.0)
+    assert scene.project_id == "project-a"
+    assert scene.run_id == "run-a"
+    assert scene.generation == 7
+    assert scene.stage == "viewer"
     np.testing.assert_allclose(scene.bounds_min, np.quantile(gaussians.means, 0.01, axis=0))
 
 

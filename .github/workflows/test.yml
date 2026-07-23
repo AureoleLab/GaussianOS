@@ -21,7 +21,7 @@ jobs:
           if ($grepExit -eq 0) { $matches; throw 'Potential secret found in tracked files.' }
           if ($grepExit -gt 1) { throw 'git grep failed.' }
           exit 0
-      - name: Unit and contract tests
+      - name: Unit, contract, and integration tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest tests/unit tests/contract
+        run: uv run pytest tests/unit tests/contract tests/integration

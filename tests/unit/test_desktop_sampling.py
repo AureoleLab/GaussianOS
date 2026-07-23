@@ -277,4 +277,8 @@ def test_generate_commits_analyzed_draft_and_trim_state(
     assert restored.sampling["in_frame"] == 5
     assert restored.sampling["out_frame"] == 104
     assert restored.sampling["selected_frame_count"] == 15
-    assert all(Path(item["thumbnail_path"]).parent == tmp_path / "workspace" / "inputs" / "analysis" for item in restored.sampling["timeline"])
+    analysis = store.paths(restored).analysis
+    assert all(
+        Path(item["thumbnail_path"]).parent == analysis
+        for item in restored.sampling["timeline"]
+    )

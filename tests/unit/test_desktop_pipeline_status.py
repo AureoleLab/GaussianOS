@@ -20,6 +20,7 @@ def _controller(tmp_path: Path):
     store = ProjectStore(tmp_path / "projects")
     project = store.create("status", tmp_path / "work")
     project.run_id = "test"
+    project.status = "running"
     store.save(project)
     return PipelineController(store, tmp_path / "artifacts", _runtime(tmp_path)), store, project
 

@@ -52,6 +52,10 @@ class ViewerScene:
     initial_focus_distance: float | None
     scene_root_transform: tuple[tuple[float, float, float, float], ...]
     canonical_world_up: tuple[float, float, float]
+    project_id: str = ""
+    run_id: str | None = None
+    generation: int = 0
+    stage: str = "viewer"
 
 
 _PLY_SCALAR_DTYPES = {
@@ -173,6 +177,10 @@ def load_viewer_scene(
     gaussian_path: str | Path,
     pointcloud_path: str | Path | None = None,
     camera_timeline: list[dict[str, Any]] | None = None,
+    *,
+    project_id: str = "",
+    run_id: str | None = None,
+    generation: int = 0,
 ) -> ViewerScene:
     """Validate and describe a SceneBundle + graphdeco-gs-v1 PLY pair."""
     bundle_file = Path(bundle_path).resolve()
@@ -318,4 +326,8 @@ def load_viewer_scene(
             tuple(float(value) for value in row) for row in SCENE_ROOT_TRANSFORM
         ),
         canonical_world_up=(0.0, 1.0, 0.0),
+        project_id=project_id,
+        run_id=run_id,
+        generation=generation,
+        stage="viewer",
     )

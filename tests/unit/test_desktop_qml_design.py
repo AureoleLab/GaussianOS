@@ -77,7 +77,9 @@ def test_startup_defaults_to_welcome_and_restore_is_opt_in() -> None:
     assert '"restoreLastProject": restoreLastProject' in main
     assert "if (restoreLastProject && lastProjectId)" in main
     assert "onClicked: openRecentProject(modelData.project_id)" in main
-    assert 'self.selected = ""' in backend
+    assert "self.session = ProjectSession()" in backend
+    assert "self.session.switch(project_id)" in backend
+    assert "viewer_handler.clear_scene()" in backend
     assert "if backend.selected:\n        backend.loadViewer()" not in backend
 
 
@@ -85,13 +87,28 @@ def test_new_project_folder_supports_native_browse_and_manual_entry() -> None:
     main = (QML / "Main.qml").read_text(encoding="utf-8")
 
     assert "id: projectFolderPicker" in main
-    assert 'title: "Choose project working folder"' in main
+    assert 'title: "Choose project library folder"' in main
     assert "projectRoot.text = selectedPath" in main
     assert 'text: "Browse…"' in main
-    assert 'toolTip: "Choose a folder in File Explorer"' in main
+    assert 'toolTip: "Choose a project library in File Explorer"' in main
     assert "onClicked: chooseProjectFolder()" in main
     assert '"lastWorkingFolder": lastWorkingFolder' in main
     assert "onAccepted: if (projectName.text.trim()" in main
+
+
+def test_p30_project_switch_and_soft_delete_are_explicit() -> None:
+    main = (QML / "Main.qml").read_text(encoding="utf-8")
+    backend = (QML.parent / "main.py").read_text(encoding="utf-8")
+
+    assert 'text: "Move “" + deleteProjectName + "” to trash?"' in main
+    assert "backend.deleteProject(target)" in main
+    assert 'enabled: modelData.status !== "running"' in main
+    assert "legacy/shared workspace" in main
+    assert "viewerPlayback.stop()" in main
+    assert "timelinePreviewSource = \"\"" in main
+    assert "self.session.switch(project_id)" in backend
+    assert "viewer_handler.clear_scene()" in backend
+    assert "self.session.accepts(data)" in backend
 
 
 def test_p29_refined_palette_is_neutral_and_accent_is_restrained() -> None:
