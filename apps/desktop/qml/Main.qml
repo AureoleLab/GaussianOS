@@ -5,6 +5,7 @@ import QtQuick.Dialogs
 import QtQuick.LocalStorage
 import QtWebEngine
 import QtMultimedia
+import "components"
 
 ApplicationWindow {
     id: window
@@ -46,6 +47,7 @@ ApplicationWindow {
     property bool viewerLogsOpen: false
     property bool projectsExpanded: true
     property bool layoutReady: false
+    property bool reducedMotion: false
     property bool leftPaneOpen: true
     property bool rightPaneOpen: true
     property bool timelineOpen: true
@@ -192,6 +194,7 @@ ApplicationWindow {
     function applyLayoutState(state) {
         if (!state) return
         if (state.themeMode === "light" || state.themeMode === "dark" || state.themeMode === "system") themeMode = state.themeMode
+        reducedMotion = state.reducedMotion === true
         leftPaneOpen = state.leftPaneOpen !== false
         rightPaneOpen = state.rightPaneOpen !== false
         timelineOpen = state.timelineOpen !== false
@@ -225,6 +228,7 @@ ApplicationWindow {
         if (!layoutReady) return
         var state = {
             "themeMode": themeMode,
+            "reducedMotion": reducedMotion,
             "leftPaneOpen": leftPaneOpen,
             "rightPaneOpen": rightPaneOpen,
             "timelineOpen": timelineOpen,
@@ -258,6 +262,7 @@ ApplicationWindow {
         Qt.callLater(function() { layoutReady = true; saveLayout() })
     }
     onThemeModeChanged: queueLayoutSave()
+    onReducedMotionChanged: queueLayoutSave()
 
     Connections {
         target: backend
@@ -441,6 +446,13 @@ ApplicationWindow {
                 }
             }
             Text { Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; wrapMode: Text.Wrap; color: theme.textSecondary; text: "Theme changes apply globally to the workspace, Pro Mode, Viewer, timeline, dialogs and every control. Shortcuts: Ctrl+1 / Ctrl+2 / Ctrl+3." }
+            Text { text: "MOTION"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22 }
+            CheckBox {
+                text: "Reduce motion"
+                checked: window.reducedMotion
+                Layout.leftMargin: 22; Layout.rightMargin: 22
+                onToggled: window.reducedMotion = checked
+            }
             GfButton { tokens: theme; text: "Reset Workspace Layout"; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.fillWidth: true; onClicked: resetLayout() }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
             Text { text: "Runtime paths are discovered from the locked P2 environment.\nRenderer: Qt WebEngine · WebGL2"; color: theme.textSecondary; Layout.leftMargin: 22; lineHeight: 1.45 }
@@ -814,30 +826,28 @@ ApplicationWindow {
                             tokens: theme; anchors.fill: parent; radius: theme.radiusLarge
                             Column {
                                 anchors.centerIn: parent; width: Math.min(620, parent.width - 60); spacing: 16
-                                Canvas {
+                                GaussianOSLoader {
                                     id: welcomeCanvas
-                                    width: 250; height: 205; anchors.horizontalCenter: parent.horizontalCenter
-                                    onPaint: {
-                                        var ctx = getContext("2d"); ctx.reset();
-                                        function cube(x,y,s,fill,stroke) {
-                                            ctx.beginPath(); ctx.moveTo(x,y-s*.48); ctx.lineTo(x+s*.72,y-s*.08); ctx.lineTo(x,y+s*.34); ctx.lineTo(x-s*.72,y-s*.08); ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); ctx.strokeStyle=stroke; ctx.lineWidth=1; ctx.stroke();
-                                            ctx.beginPath(); ctx.moveTo(x-s*.72,y-s*.08); ctx.lineTo(x,y+s*.34); ctx.lineTo(x,y+s*1.18); ctx.lineTo(x-s*.72,y+s*.72); ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); ctx.stroke();
-                                            ctx.beginPath(); ctx.moveTo(x+s*.72,y-s*.08); ctx.lineTo(x,y+s*.34); ctx.lineTo(x,y+s*1.18); ctx.lineTo(x+s*.72,y+s*.72); ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); ctx.stroke();
-                                        }
-                                        var faint = theme.dark ? "rgba(255,255,255,.035)" : "rgba(20,20,20,.018)";
-                                        var edge = theme.dark ? "rgba(210,210,210,.24)" : "rgba(70,70,70,.18)";
-                                        cube(112,50,62,faint,edge); cube(112,102,62,faint,edge); cube(178,116,36,theme.dark?"rgba(127,149,181,.20)":"rgba(83,107,140,.13)",theme.accent);
-                                    }
+                                    width: 189; height: 189
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    running: current.status === "running" && route === "home"
+                                    loop: true
+                                    durationSeconds: 2.4
+                                    backgroundColor: "transparent"
+                                    frameColor: "#aab5c6"
+                                    dotColor: "#126df5"
+                                    showCompleteWhenStopped: true
+                                    reducedMotion: window.reducedMotion
                                     Connections { target: theme; function onDarkChanged() { welcomeCanvas.requestPaint() } }
                                 }
-                                Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: current.project_id ? "Ready to reconstruct" : "Welcome to Gaussian Factory"; color: theme.text; font.pixelSize: theme.typeHero; font.weight: Font.DemiBold }
-                                Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; lineHeight: 1.45; text: current.project_id ? "Import video or images to begin a high-quality 3D Gaussian reconstruction." : "Create a new project or import footage to reconstruct high-quality 3D Gaussian artifacts."; color: theme.textSecondary; font.pixelSize: 14 }
+                                Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: current.status === "running" ? "Reconstructing " + (current.name || "project") : current.project_id ? "Ready to reconstruct" : "Welcome to Gaussian Factory"; color: theme.text; font.pixelSize: theme.typeHero; font.weight: Font.DemiBold }
+                                Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap; lineHeight: 1.45; text: current.status === "running" ? "GaussianOS is processing " + (current.current_stage || "the current stage") + ". You can monitor progress and activity while it runs." : current.project_id ? "Import video or images to begin a high-quality 3D Gaussian reconstruction." : "Create a new project or import footage to reconstruct high-quality 3D Gaussian artifacts."; color: theme.textSecondary; font.pixelSize: 14 }
                                 Row { anchors.horizontalCenter: parent.horizontalCenter; spacing: 12
                                     GfButton { tokens: theme; text: "New Project"; iconText: "+"; primary: true; implicitWidth: 164; onClicked: projectDialog.open() }
                                     GfButton { tokens: theme; text: "Import Video"; iconText: "▻"; implicitWidth: 164; onClicked: inputPicker.open() }
                                     GfButton { tokens: theme; text: "Import Images"; iconText: "▧"; implicitWidth: 164; enabled: !!current.project_id; onClicked: folderPicker.open() }
                                 }
-                                Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: current.project_id ? "Project ready. Add an input to continue." : "Your projects will appear in the sidebar."; color: theme.textTertiary; font.pixelSize: theme.typeSmall; topPadding: 8 }
+                                Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; text: current.status === "running" ? Math.round((current.progress || 0) * 100) + "% complete" : current.project_id ? "Project ready. Add an input to continue." : "Your projects will appear in the sidebar."; color: theme.textTertiary; font.pixelSize: theme.typeSmall; topPadding: 8 }
                             }
                         }
                     }
