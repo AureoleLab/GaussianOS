@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 import threading
+import traceback
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ from packages.artifact_store import ArtifactStore
 from packages.artifact_store.store import atomic_write_json
 from packages.file_lock import ProjectLockError
 from packages.licensing import ProfilePolicyRegistry
-from packages.pipeline import CancellationToken, SubprocessWorkerRunner
+from packages.pipeline import CancellationToken, ExecutionOutcome, SubprocessWorkerRunner
 from packages.plugin_sdk import ExecutionProfile, PluginManifest, StageKind, StageRequest, StageStatus
 
 from .camera_timeline import build_camera_timeline
@@ -54,6 +55,14 @@ PROFILES = {
     "balanced": {"fps": 8.0, "steps": 3000},
     "quality": {"fps": 15.0, "steps": 7000},
 }
+
+
+class WorkerStageError(RuntimeError):
+    """Pipeline exception retaining the worker audit fields for the GUI/log."""
+
+    def __init__(self, message: str, diagnostics: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
 
 
 def _idle_project_write(method: Callable[..., Project]) -> Callable[..., Project]:
@@ -617,7 +626,32 @@ class PipelineController:
             self._terminate_active_stage(project, "failed", str(exc))
             project.status = "failed"
             project.warnings.append(f"{type(exc).__name__}: {exc}")
-            self._emit(identified_event, "error", str(exc), {})
+            error_payload: dict[str, Any] = {
+                "exception_type": type(exc).__name__,
+                "traceback": traceback.format_exc(),
+            }
+            if isinstance(exc, WorkerStageError):
+                error_payload.update(exc.diagnostics)
+            if project.run_id:
+                try:
+                    atomic_write_json(
+                        self.store.paths(project).run(project.run_id).logs
+                        / "pipeline-error.json",
+                        {
+                            "schema_version": "gaussianos-pipeline-error/v1",
+                            "project_id": project.project_id,
+                            "run_id": project.run_id,
+                            "generation": generation,
+                            "stage": project.current_stage or error_payload.get(
+                                "worker_stage", "pipeline"
+                            ),
+                            "message": str(exc),
+                            **error_payload,
+                        },
+                    )
+                except (OSError, ProjectStoreError, TypeError, ValueError):
+                    pass
+            self._emit(identified_event, "error", str(exc), error_payload)
         finally:
             if started and not persistence_failed:
                 project.current_stage = None
@@ -850,6 +884,63 @@ class PipelineController:
             cancellation_token=token,
         )
 
+    @staticmethod
+    def _worker_diagnostics(
+        stage: str, outcome: ExecutionOutcome
+    ) -> dict[str, Any]:
+        error = outcome.result.error
+        error_code = getattr(error, "code", None) if error else None
+        diagnostics: dict[str, Any] = {
+            "worker_stage": stage,
+            "worker_plugin_id": getattr(outcome.result, "plugin_id", None),
+            "worker_error_code": (
+                getattr(error_code, "value", str(error_code))
+                if error_code is not None
+                else None
+            ),
+            "worker_error_details": getattr(error, "details", {}) if error else {},
+            "worker_return_code": getattr(outcome, "return_code", None),
+            "worker_attempt_archive": (
+                str(getattr(outcome, "attempt_archive", None))
+                if getattr(outcome, "attempt_archive", None)
+                else None
+            ),
+        }
+        log_tails: dict[str, str] = {}
+        archive = getattr(outcome, "attempt_archive", None)
+        if archive and archive.is_dir():
+            for log in sorted(archive.rglob("*.log")):
+                try:
+                    content = log.read_text(encoding="utf-8", errors="replace").strip()
+                except OSError:
+                    continue
+                if content:
+                    log_tails[log.relative_to(archive).as_posix()] = content[-2000:]
+                if len(log_tails) == 4:
+                    break
+        diagnostics["worker_log_tails"] = log_tails
+        return diagnostics
+
+    def _worker_failure(
+        self,
+        stage: str,
+        outcome: ExecutionOutcome,
+        event: Callable[[str, str, dict[str, Any]], None] | None,
+    ) -> WorkerStageError:
+        message = (
+            outcome.result.error.message
+            if outcome.result.error
+            else f"{stage} worker failed without a structured error"
+        )
+        diagnostics = self._worker_diagnostics(stage, outcome)
+        self._emit(
+            event,
+            "worker_error",
+            message,
+            {"stage": stage, **diagnostics},
+        )
+        return WorkerStageError(message, diagnostics)
+
     def _reconstruct(self, project: Project, images: Path, token: CancellationToken, event: Callable[[str, str, dict[str, Any]], None] | None) -> Path:
         for stage in ("colmap", "fallback"):
             cached = self._previous(project, stage)
@@ -872,6 +963,7 @@ class PipelineController:
             raise InterruptedError(token.reason)
         state.status, state.error = "fallback_required", outcome.result.error.message if outcome.result.error else "COLMAP failed"
         self._persist(project)
+        self._worker_failure("colmap", outcome, event)
         self._emit(event, "warning", "COLMAP failed its quality gate; starting MapAnything + COLMAP BA", {})
         return self._fallback(project, images, count, token, event)
 
@@ -883,7 +975,7 @@ class PipelineController:
         outcome = self._run_worker(project, manifest, request, self.runtime.map_python, token)
         self._raise_if_cancelled(token)
         if outcome.result.status is not StageStatus.SUCCEEDED:
-            raise RuntimeError(outcome.result.error.message if outcome.result.error else "MapAnything worker failed")
+            raise self._worker_failure("fallback", outcome, event)
         state.artifact_paths, state.metrics = [str(item.path) for item in outcome.committed_artifacts], outcome.result.quality_report.metrics if outcome.result.quality_report else {}
         self._complete(project, "fallback", state, event)
         return Path(state.artifact_paths[0])

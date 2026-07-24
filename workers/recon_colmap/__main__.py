@@ -19,6 +19,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from packages.exportkit import write_pointcloud_ply
+from packages.native_paths import native_tool_path
 from packages.plugin_sdk import (
     ArtifactFile,
     ArtifactManifest,
@@ -229,8 +230,8 @@ def _run(request: StageRequest, result_path: Path, started_at: datetime) -> tupl
     commands = {
         "feature_extractor": [
             str(executable), "feature_extractor",
-            "--database_path", str(database),
-            "--image_path", str(images),
+            "--database_path", native_tool_path(database),
+            "--image_path", native_tool_path(images),
             "--ImageReader.single_camera", "1",
             "--ImageReader.camera_model", config.camera_model,
             "--default_random_seed", "0",
@@ -239,7 +240,7 @@ def _run(request: StageRequest, result_path: Path, started_at: datetime) -> tupl
         ],
         "exhaustive_matcher": [
             str(executable), "exhaustive_matcher",
-            "--database_path", str(database),
+            "--database_path", native_tool_path(database),
             "--default_random_seed", "0",
             "--FeatureMatching.use_gpu", gpu,
             "--FeatureMatching.gpu_index", "0",
@@ -248,9 +249,9 @@ def _run(request: StageRequest, result_path: Path, started_at: datetime) -> tupl
         ],
         "mapper": [
             str(executable), "mapper",
-            "--database_path", str(database),
-            "--image_path", str(images),
-            "--output_path", str(sparse),
+            "--database_path", native_tool_path(database),
+            "--image_path", native_tool_path(images),
+            "--output_path", native_tool_path(sparse),
             "--default_random_seed", "0",
             "--Mapper.random_seed", "0",
             "--Mapper.multiple_models", "0",
@@ -265,11 +266,15 @@ def _run(request: StageRequest, result_path: Path, started_at: datetime) -> tupl
         model = sparse / "0"
         if not model.is_dir():
             raise RuntimeError("COLMAP mapper did not produce sparse/0")
-        analyzer_command = [str(executable), "model_analyzer", "--path", str(model)]
+        analyzer_command = [
+            str(executable), "model_analyzer", "--path", native_tool_path(model)
+        ]
         timings["model_analyzer"], analyzer_text = _run_command(analyzer_command, logs / "model_analyzer.log")
         converter_command = [
-            str(executable), "model_converter", "--input_path", str(model),
-            "--output_path", str(text_model), "--output_type", "TXT",
+            str(executable), "model_converter",
+            "--input_path", native_tool_path(model),
+            "--output_path", native_tool_path(text_model),
+            "--output_type", "TXT",
         ]
         timings["model_converter"] , _ = _run_command(converter_command, logs / "model_converter.log")
         for source in model.iterdir():

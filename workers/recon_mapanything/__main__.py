@@ -21,6 +21,7 @@ import torch
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from safetensors.torch import load_file
 
+from packages.native_paths import native_tool_path
 from packages.plugin_sdk import (
     ArtifactFile,
     ArtifactManifest,
@@ -123,13 +124,13 @@ def _baseline_colmap(config: FallbackConfig, work: Path, logs: Path) -> dict[str
     sparse = work / "sparse"
     sparse.mkdir(parents=True)
     commands = [
-        [colmap, "feature_extractor", "--database_path", str(database), "--image_path", config.images_path,
+        [colmap, "feature_extractor", "--database_path", native_tool_path(database), "--image_path", native_tool_path(config.images_path),
          "--ImageReader.single_camera", "1", "--ImageReader.camera_model", "SIMPLE_RADIAL",
          "--FeatureExtraction.use_gpu", "1", "--FeatureExtraction.gpu_index", "0", "--default_random_seed", "0"],
-        [colmap, "exhaustive_matcher", "--database_path", str(database), "--FeatureMatching.use_gpu", "1",
+        [colmap, "exhaustive_matcher", "--database_path", native_tool_path(database), "--FeatureMatching.use_gpu", "1",
          "--FeatureMatching.gpu_index", "0", "--FeatureMatching.guided_matching", "1", "--default_random_seed", "0"],
-        [colmap, "mapper", "--database_path", str(database), "--image_path", config.images_path,
-         "--output_path", str(sparse), "--Mapper.multiple_models", "0", "--Mapper.random_seed", "0",
+        [colmap, "mapper", "--database_path", native_tool_path(database), "--image_path", native_tool_path(config.images_path),
+         "--output_path", native_tool_path(sparse), "--Mapper.multiple_models", "0", "--Mapper.random_seed", "0",
          "--Mapper.ba_refine_principal_point", "0", "--default_random_seed", "0"],
     ]
     timings: list[float] = []
@@ -146,7 +147,7 @@ def _baseline_colmap(config: FallbackConfig, work: Path, logs: Path) -> dict[str
         retry_sparse = work / "sparse_retry"
         retry_sparse.mkdir()
         retry_command = list(commands[2])
-        retry_command[retry_command.index("--output_path") + 1] = str(retry_sparse)
+        retry_command[retry_command.index("--output_path") + 1] = native_tool_path(retry_sparse)
         mapper_code, elapsed, mapper_text = _command(
             retry_command, logs / "baseline_mapper_retry.log", allow_failure=True
         )
@@ -169,7 +170,7 @@ def _baseline_colmap(config: FallbackConfig, work: Path, logs: Path) -> dict[str
             "failure": mapper_text[-2000:],
         }
     _, analyzer_seconds, analyzer = _command(
-        [colmap, "model_analyzer", "--path", str(models[0])], logs / "baseline_model_analyzer.log"
+        [colmap, "model_analyzer", "--path", native_tool_path(models[0])], logs / "baseline_model_analyzer.log"
     )
     metrics = parse_model_analyzer(analyzer)
     return {
@@ -438,25 +439,25 @@ def _run(request: StageRequest, started: datetime) -> tuple[StageResult, int]:
         inference_seconds, peak_vram, alias_count = _infer_and_export(config, output)
         sparse = output / "sparse"
         _, pre_seconds, pre_text = _command(
-            [config.colmap_executable, "model_analyzer", "--path", str(sparse)], logs / "mapanything_model_analyzer.log"
+            [config.colmap_executable, "model_analyzer", "--path", native_tool_path(sparse)], logs / "mapanything_model_analyzer.log"
         )
         pre = parse_model_analyzer(pre_text)
         ba = output / "sparse_ba"
         ba.mkdir()
         ba_code, ba_seconds, ba_text = _command(
-            [config.colmap_executable, "bundle_adjuster", "--input_path", str(sparse), "--output_path", str(ba),
+            [config.colmap_executable, "bundle_adjuster", "--input_path", native_tool_path(sparse), "--output_path", native_tool_path(ba),
              "--BundleAdjustment.max_num_iterations", "100", "--BundleAdjustment.refine_principal_point", "0",
              "--BundleAdjustment.use_gpu", "0", "--default_random_seed", "0"],
             logs / "bundle_adjuster.log",
         )
         _, post_seconds, post_text = _command(
-            [config.colmap_executable, "model_analyzer", "--path", str(ba)], logs / "ba_model_analyzer.log"
+            [config.colmap_executable, "model_analyzer", "--path", native_tool_path(ba)], logs / "ba_model_analyzer.log"
         )
         post = parse_model_analyzer(post_text)
         text_model = output / "sparse_ba_txt"
         text_model.mkdir()
         _command(
-            [config.colmap_executable, "model_converter", "--input_path", str(ba), "--output_path", str(text_model), "--output_type", "TXT"],
+            [config.colmap_executable, "model_converter", "--input_path", native_tool_path(ba), "--output_path", native_tool_path(text_model), "--output_type", "TXT"],
             logs / "ba_model_converter.log",
         )
         cameras = _camera_payload(text_model)

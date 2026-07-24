@@ -111,6 +111,13 @@ def test_p30_project_switch_and_soft_delete_are_explicit() -> None:
     assert "self.session.accepts(data)" in backend
 
 
+def test_media_position_signal_uses_explicit_qml_handler_parameters() -> None:
+    main = (QML / "Main.qml").read_text(encoding="utf-8")
+
+    assert "onPositionChanged: function()" in main
+    assert "proPreviewPosition = proPlayer.position" in main
+
+
 def test_p29_refined_palette_is_neutral_and_accent_is_restrained() -> None:
     tokens = (QML / "DesignTokens.qml").read_text(encoding="utf-8")
 

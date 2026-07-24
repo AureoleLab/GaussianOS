@@ -635,9 +635,9 @@ ApplicationWindow {
             onMediaStatusChanged: {
                 if (mediaStatus === MediaPlayer.LoadedMedia || mediaStatus === MediaPlayer.BufferedMedia) Qt.callLater(restoreProPreview)
             }
-            onPositionChanged: {
+            onPositionChanged: function() {
                 if (!proPreviewRestoring && !proPreviewPriming && importDraft.source) {
-                    proPreviewPosition = position
+                    proPreviewPosition = proPlayer.position
                     queueLayoutSave()
                 }
             }
