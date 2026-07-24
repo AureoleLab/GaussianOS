@@ -130,6 +130,10 @@ class ProjectPaths:
         return self.workspace / ".locks"
 
     @property
+    def transactions(self) -> Path:
+        return self.workspace / ".transactions"
+
+    @property
     def trash_root(self) -> Path:
         if self.workspace_kind == "isolated":
             return self.library_root / ".gaussianos" / ".trash"
@@ -164,5 +168,13 @@ class ProjectPaths:
     def ensure(self) -> None:
         if self.workspace_kind == "isolated":
             self.validate_isolated_identity()
-        for directory in (self.workspace, self.inputs, self.analysis, self.runs, self.viewer, self.locks):
+        for directory in (
+            self.workspace,
+            self.inputs,
+            self.analysis,
+            self.runs,
+            self.viewer,
+            self.locks,
+            self.transactions,
+        ):
             directory.mkdir(parents=True, exist_ok=True)

@@ -8,6 +8,7 @@ non-Qt worker thread.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import sys
@@ -158,7 +159,255 @@ class PipelineController:
                 state.status = "stale"
                 state.error = reason
         project.sampling["camera_mapping_stale"] = True
+        project.sampling.pop("camera_timeline", None)
         project.run_id = None
+        project.current_stage = None
+
+    def cleanup_project(self, project_id: str, target: str) -> Project:
+        """Remove selected owned outputs through a rollback-capable transaction."""
+
+        stage_groups = {
+            "reconstruction": ("colmap", "fallback", "train", "validate", "export"),
+            "training": ("train", "validate", "export"),
+            "viewer": ("export",),
+            "exports": ("export",),
+        }
+        artifact_stage_groups = {
+            **stage_groups,
+            "viewer": (),
+        }
+        if target not in stage_groups:
+            raise ValueError(
+                "cleanup target must be reconstruction, training, viewer, or exports"
+            )
+        with self.store.lifecycle_lock(project_id), self.store.run_lock(project_id):
+            project = self.store.load(project_id)
+            if project.status == "running":
+                raise ProjectLockError(
+                    "project is running and cannot be cleaned"
+                )
+            if project.workspace_kind != "isolated":
+                raise ProjectStoreError(
+                    "Legacy/shared project cleanup is blocked until explicit migration."
+                )
+            paths = self.store.ensure_writable(project)
+            targets: list[Path] = []
+            for stage in artifact_stage_groups[target]:
+                state = project.stages.get(stage)
+                if state is None:
+                    continue
+                for value in state.artifact_paths:
+                    path = Path(value).resolve()
+                    if paths.contains(path):
+                        targets.append(path)
+            if project.run_id:
+                run_paths = paths.run(project.run_id)
+                if target in {"reconstruction", "training"}:
+                    targets.append(run_paths.training)
+                if target in {"reconstruction", "training", "exports"}:
+                    targets.append(run_paths.exports)
+                if target in {"reconstruction", "training", "viewer"}:
+                    targets.append(run_paths.timeline_manifest)
+            if target in {"reconstruction", "training", "viewer", "exports"}:
+                targets.append(paths.viewer_manifest)
+
+            unique: list[Path] = []
+            for candidate in sorted(
+                {item.resolve() for item in targets if item.exists()},
+                key=lambda item: len(item.parts),
+            ):
+                if not paths.contains(candidate):
+                    raise ProjectStoreError(
+                        f"cleanup target is outside the owning project: {candidate}"
+                    )
+                if any(parent == candidate or parent in candidate.parents for parent in unique):
+                    continue
+                unique.append(candidate)
+
+            transaction = paths.transactions / f"cleanup-{uuid4().hex}"
+            transaction.mkdir(parents=True, exist_ok=False)
+            moves = [
+                {
+                    "source": str(source),
+                    "quarantine": str(transaction / f"{index:03d}-{source.name}"),
+                }
+                for index, source in enumerate(unique)
+            ]
+            manifest = transaction / "transaction.json"
+            atomic_write_json(
+                manifest,
+                {
+                    "schema_version": "gaussianos-cleanup-transaction/v1",
+                    "project_id": project_id,
+                    "target": target,
+                    "phase": "moving",
+                    "moves": moves,
+                },
+            )
+            moved: list[tuple[Path, Path]] = []
+            metadata_committed = False
+            try:
+                for item in moves:
+                    source = Path(item["source"])
+                    quarantine = Path(item["quarantine"])
+                    if source.exists():
+                        quarantine.parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(source, quarantine)
+                        moved.append((source, quarantine))
+                atomic_write_json(
+                    manifest,
+                    {
+                        "schema_version": "gaussianos-cleanup-transaction/v1",
+                        "project_id": project_id,
+                        "target": target,
+                        "phase": "moved",
+                        "moves": moves,
+                    },
+                )
+
+                def apply(current: Project) -> None:
+                    if current.status == "running":
+                        raise ProjectLockError(
+                            "project started running while cleanup was pending"
+                        )
+                    for stage_name in stage_groups[target]:
+                        current.stages[stage_name] = StageState()
+                    current.sampling.pop("camera_timeline", None)
+                    current.sampling["camera_mapping_stale"] = True
+                    current.run_id = None
+                    current.current_stage = None
+                    current.status = "ready" if current.input_path else "idle"
+                    current.warnings.append(
+                        f"Cleared {target} outputs; downstream artifacts must be rebuilt."
+                    )
+
+                cleaned, _ = self.store.update_project(project_id, apply)
+                metadata_committed = True
+                atomic_write_json(
+                    manifest,
+                    {
+                        "schema_version": "gaussianos-cleanup-transaction/v1",
+                        "project_id": project_id,
+                        "target": target,
+                        "phase": "committed",
+                        "moves": moves,
+                    },
+                )
+            except Exception:
+                if metadata_committed:
+                    # The durable project snapshot is authoritative.  Keep the
+                    # owned transaction for startup to finish instead of
+                    # restoring artifacts that metadata has invalidated.
+                    return cleaned
+                for source, quarantine in reversed(moved):
+                    if quarantine.exists() and not source.exists():
+                        source.parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(quarantine, source)
+                shutil.rmtree(transaction, ignore_errors=True)
+                raise
+            shutil.rmtree(transaction, ignore_errors=True)
+            return cleaned
+
+    def recover_lifecycle_residuals(self) -> list[str]:
+        """Recover only transactions and temp paths with provable project ownership."""
+
+        actions = self.store.recover_lifecycle_residuals()
+        for snapshot in self.store.all():
+            if snapshot.workspace_kind != "isolated":
+                continue
+            try:
+                run_lock = self.store.run_lock(snapshot.project_id)
+                run_lock.acquire()
+            except ProjectLockError:
+                continue
+            try:
+                current = self.store.load(snapshot.project_id)
+                if current.status == "running":
+                    continue
+                paths = self.store.paths(current)
+                for transaction in sorted(paths.transactions.glob("cleanup-*")):
+                    manifest = transaction / "transaction.json"
+                    try:
+                        payload = json.loads(manifest.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, TypeError):
+                        # Unknown directories are deliberately preserved.
+                        continue
+                    if (
+                        payload.get("schema_version")
+                        != "gaussianos-cleanup-transaction/v1"
+                        or payload.get("project_id") != current.project_id
+                    ):
+                        continue
+                    stage_groups = {
+                        "reconstruction": (
+                            "colmap", "fallback", "train", "validate", "export"
+                        ),
+                        "training": ("train", "validate", "export"),
+                        "viewer": ("export",),
+                        "exports": ("export",),
+                    }
+                    target = str(payload.get("target", ""))
+                    metadata_committed = (
+                        target in stage_groups
+                        and current.run_id is None
+                        and any(
+                            warning.startswith(f"Cleared {target} outputs;")
+                            for warning in current.warnings
+                        )
+                        and all(
+                            current.stages.get(name, StageState()).status
+                            == "pending"
+                            for name in stage_groups[target]
+                        )
+                    )
+                    if payload.get("phase") == "committed" or metadata_committed:
+                        shutil.rmtree(transaction)
+                        actions.append(f"finished cleanup transaction for {current.name}")
+                        continue
+                    for move in reversed(payload.get("moves", [])):
+                        source = Path(str(move.get("source", ""))).resolve()
+                        quarantine = Path(str(move.get("quarantine", ""))).resolve()
+                        if (
+                            paths.contains(source)
+                            and paths.contains(quarantine)
+                            and quarantine.exists()
+                            and not source.exists()
+                        ):
+                            source.parent.mkdir(parents=True, exist_ok=True)
+                            os.replace(quarantine, source)
+                    shutil.rmtree(transaction)
+                    actions.append(f"rolled back cleanup transaction for {current.name}")
+
+                if not paths.analysis.exists():
+                    backups = sorted(
+                        paths.inputs.glob(".analysis.*.backup"),
+                        key=lambda item: item.stat().st_mtime,
+                        reverse=True,
+                    )
+                    if backups:
+                        os.replace(backups[0], paths.analysis)
+                        actions.append(f"restored sampling analysis for {current.name}")
+                for residual in paths.inputs.glob(".analysis.*"):
+                    if residual.name.endswith((".staging", ".backup", ".failed")):
+                        shutil.rmtree(residual)
+                        actions.append(f"removed sampling residual for {current.name}")
+                for run in paths.runs.iterdir() if paths.runs.is_dir() else ():
+                    temp = run / "temp"
+                    if temp.is_dir():
+                        shutil.rmtree(temp)
+                        temp.mkdir()
+                        actions.append(f"cleared run temp for {current.name}")
+                    exports = run / "exports"
+                    if exports.is_dir():
+                        for staging in exports.glob(".*.staging"):
+                            if staging.is_dir():
+                                shutil.rmtree(staging)
+                            else:
+                                staging.unlink()
+                            actions.append(f"removed export staging for {current.name}")
+            finally:
+                run_lock.release()
+        return actions
 
     @_idle_project_write
     def import_input(self, project_id: str, source: str | Path) -> Project:
@@ -233,6 +482,7 @@ class PipelineController:
         def apply(project: Project) -> None:
             if project.status == "running":
                 raise RuntimeError("cannot change profile while a pipeline is running")
+            profile_changed = project.profile != profile
             project.profile = profile
             if project.input_kind == "video" and project.sampling and not project.sampling.get("manual_override", False):
                 probe = self._probe_from_project(project)
@@ -279,6 +529,12 @@ class PipelineController:
                     **estimate,
                 })
                 self._mark_outputs_stale(project, "Profile changed reconstruction outputs")
+            elif profile_changed:
+                self._mark_outputs_stale(
+                    project, "Profile changed reconstruction outputs"
+                )
+            if profile_changed:
+                project.status = "ready" if project.input_path else "idle"
         project, _ = self.store.update_project(project_id, apply)
         return project
 

@@ -191,6 +191,10 @@ def main() -> int:
         # The GUI still starts and surfaces a persistence error through its
         # normal control-plane actions instead of crashing during bootstrap.
         pass
+    try:
+        lifecycle_recovery = controller.recover_lifecycle_residuals()
+    except Exception as exc:
+        lifecycle_recovery = [f"Lifecycle recovery warning: {exc}"]
 
     class ViewerSchemeHandler(QWebEngineUrlSchemeHandler):
         def __init__(self) -> None:
@@ -267,7 +271,10 @@ def main() -> int:
             # Recent projects stay visible, but a normal launch starts at the
             # Welcome surface until the user explicitly opens one.
             self.session = ProjectSession()
-            self.logs: list[str] = [f"Runtime doctor: {message}" for message in doctor()]
+            self.logs: list[str] = [
+                *[f"Runtime doctor: {message}" for message in doctor()],
+                *lifecycle_recovery,
+            ]
             self.viewer_url = "about:blank"
             self.viewer_status = "Select a completed project to load its Gaussian artifact"
             self.viewer_revision = 0
@@ -311,6 +318,10 @@ def main() -> int:
 
         def _activate_project(self, project_id: str, *, load_viewer: bool = True) -> None:
             project = store.load(project_id) if project_id else None
+            if project is not None and project.archived:
+                raise ProjectStoreError(
+                    "Archived projects must be restored before they can be opened."
+                )
             self.session.switch(project_id)
             self._clear_project_presentation(
                 "Validating project artifacts…"
@@ -328,6 +339,22 @@ def main() -> int:
                 if item["project_id"] in self.persistence_failed:
                     item["status"] = "failed"
             return json.dumps(values, ensure_ascii=False)
+
+        @Property(str, notify=changed)
+        def trashJson(self) -> str:
+            return json.dumps(
+                [
+                    {
+                        "project_id": entry.project_id,
+                        "name": entry.name,
+                        "deleted_at": entry.deleted_at,
+                        "estimated_bytes": entry.estimated_bytes,
+                        "legacy_workspace_preserved": entry.legacy_workspace_preserved,
+                    }
+                    for entry in store.trash_entries()
+                ],
+                ensure_ascii=False,
+            )
 
         @Property(str, notify=changed)
         def currentJson(self) -> str:
@@ -582,7 +609,8 @@ def main() -> int:
         @Slot()
         def start(self) -> None:
             project = self._project()
-            if project is None or project.status == "running": return
+            if project is None or project.status == "running" or project.archived:
+                return
             self.persistence_failed.discard(project.project_id)
             project_id = project.project_id
             generation = self.session.switch(project_id)
@@ -622,7 +650,7 @@ def main() -> int:
         @Slot()
         def loadViewer(self) -> None:
             project = self._project()
-            if project is None:
+            if project is None or project.archived:
                 self._clear_project_presentation(
                     "Select a completed project to load its Gaussian artifact"
                 )
@@ -775,9 +803,124 @@ def main() -> int:
                 self._clear_project_presentation(
                     "Select a completed project to load its Gaussian artifact"
                 )
-                self._refresh()
-            else:
-                self._refresh()
+            self._refresh()
+
+        @Slot(str, str)
+        def renameProject(self, project_id: str, name: str) -> None:
+            try:
+                renamed = store.rename(project_id, name)
+                self.logs.append(f"Renamed project to {renamed.name}")
+            except Exception as exc:
+                self.logs.append(f"Project rename blocked: {exc}")
+            self._refresh()
+
+        @Slot(str, str, str)
+        def duplicateProject(self, project_id: str, name: str, mode: str) -> None:
+            generation = self.session.generation
+            self.logs.append(f"Project copy queued ({mode})")
+            self.changed.emit()
+            def duplicate() -> None:
+                try:
+                    copied = store.duplicate(project_id, name, mode=mode)
+                    self.event.emit(
+                        "lifecycle_duplicate_ready",
+                        f"Duplicated project as {copied.name} ({mode})",
+                        {
+                            "source_project_id": project_id,
+                            "generation": generation,
+                            "project_id": copied.project_id,
+                            "mode": mode,
+                        },
+                    )
+                except Exception as exc:
+                    self.event.emit(
+                        "lifecycle_failed",
+                        f"Project duplicate blocked: {exc}",
+                        {
+                            "source_project_id": project_id,
+                            "generation": generation,
+                        },
+                    )
+            threading.Thread(
+                target=duplicate,
+                name=f"project-copy-{project_id[:8]}",
+                daemon=True,
+            ).start()
+
+        @Slot(str, bool)
+        def setProjectArchived(self, project_id: str, archived: bool) -> None:
+            try:
+                project = store.set_archived(project_id, archived)
+                self.logs.append(
+                    f"{'Archived' if archived else 'Restored'} project {project.name}"
+                )
+                if archived and self.session.remove_project(project_id):
+                    self._clear_project_presentation(
+                        "Select a completed project to load its Gaussian artifact"
+                    )
+            except Exception as exc:
+                self.logs.append(f"Project archive operation blocked: {exc}")
+            self._refresh()
+
+        @Slot(str)
+        def restoreProject(self, project_id: str) -> None:
+            try:
+                restored = store.restore(project_id)
+                self.logs.append(f"Restored project {restored.name} from trash")
+            except Exception as exc:
+                self.logs.append(f"Project restore blocked: {exc}")
+            self._refresh()
+
+        @Slot(str)
+        def purgeProject(self, project_id: str) -> None:
+            def purge() -> None:
+                try:
+                    released = store.purge(project_id)
+                    self.event.emit(
+                        "lifecycle_refresh",
+                        f"Permanently deleted project; released approximately {released} bytes",
+                        {},
+                    )
+                except Exception as exc:
+                    self.event.emit(
+                        "lifecycle_failed",
+                        f"Permanent delete blocked: {exc}",
+                        {},
+                    )
+            threading.Thread(
+                target=purge,
+                name=f"project-purge-{project_id[:8]}",
+                daemon=True,
+            ).start()
+
+        @Slot(str, str)
+        def cleanupProject(self, project_id: str, target: str) -> None:
+            generation = self.session.generation
+            def cleanup() -> None:
+                try:
+                    cleaned = controller.cleanup_project(project_id, target)
+                    self.event.emit(
+                        "lifecycle_cleanup_ready",
+                        f"Cleared {target} outputs for {cleaned.name}",
+                        {
+                            "project_id": project_id,
+                            "generation": generation,
+                        },
+                    )
+                except Exception as exc:
+                    self.event.emit(
+                        "lifecycle_failed",
+                        f"Project cleanup blocked: {exc}",
+                        {
+                            "project_id": project_id,
+                            "generation": generation,
+                        },
+                    )
+            threading.Thread(
+                target=cleanup,
+                name=f"project-cleanup-{project_id[:8]}",
+                daemon=True,
+            ).start()
 
         @Slot(str)
         def viewerPageTitle(self, title: str) -> None:
@@ -826,6 +969,42 @@ def main() -> int:
         def handleEvent(self, kind: str, message: str, payload: object) -> None:
             """Queued Qt slot: all QML-facing updates remain on the GUI thread."""
             data = payload if isinstance(payload, dict) else {}
+
+            if kind.startswith("lifecycle_"):
+                owner = data.get("source_project_id") or data.get("project_id")
+                if (
+                    owner
+                    and data.get("generation") is not None
+                    and (
+                        owner != self.session.project_id
+                        or data.get("generation") != self.session.generation
+                    )
+                ):
+                    self._refresh()
+                    return
+                self.logs.append(message)
+                if kind == "lifecycle_duplicate_ready":
+                    source_project_id = data.get("source_project_id")
+                    if (
+                        source_project_id == self.session.project_id
+                        and data.get("generation") == self.session.generation
+                    ):
+                        self._activate_project(
+                            str(data.get("project_id", "")),
+                            load_viewer=data.get("mode") == "complete",
+                        )
+                        return
+                elif kind == "lifecycle_cleanup_ready":
+                    if (
+                        data.get("project_id") == self.session.project_id
+                        and data.get("generation") == self.session.generation
+                    ):
+                        self.session.switch(self.session.project_id)
+                        self._clear_project_presentation(
+                            "Project outputs were cleared; run the required stages again"
+                        )
+                self._refresh()
+                return
 
             if kind.startswith("import_"):
                 if data.get("generation") != self.import_generation:

@@ -118,6 +118,27 @@ def test_media_position_signal_uses_explicit_qml_handler_parameters() -> None:
     assert "proPreviewPosition = proPlayer.position" in main
 
 
+def test_p31_lifecycle_cleanup_and_permanent_delete_are_explicit() -> None:
+    main = (QML / "Main.qml").read_text(encoding="utf-8")
+    backend = (QML.parent / "main.py").read_text(encoding="utf-8")
+
+    for action in (
+        "renameProject",
+        "duplicateProject",
+        "setProjectArchived",
+        "restoreProject",
+        "purgeProject",
+        "cleanupProject",
+    ):
+        assert f"backend.{action}" in main
+        assert f"def {action}" in backend
+    assert "Estimated space to release: " in main
+    assert "Type the project name to confirm: " in main
+    assert "purgeConfirmation.text === purgeProjectName" in main
+    assert 'text: "Copy Inputs & Settings"' in main
+    assert 'text: "Copy Complete Valid Project"' in main
+
+
 def test_p29_refined_palette_is_neutral_and_accent_is_restrained() -> None:
     tokens = (QML / "DesignTokens.qml").read_text(encoding="utf-8")
 

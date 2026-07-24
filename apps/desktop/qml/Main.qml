@@ -47,6 +47,11 @@ ApplicationWindow {
     property string deleteProjectId: ""
     property string deleteProjectName: ""
     property bool deleteProjectLegacy: false
+    property var lifecycleProject: ({})
+    property string cleanupTarget: ""
+    property string purgeProjectId: ""
+    property string purgeProjectName: ""
+    property real purgeProjectBytes: 0
     property bool logsOpen: true
     property bool viewerLogsOpen: false
     property bool projectsExpanded: true
@@ -182,6 +187,29 @@ ApplicationWindow {
         deleteProjectName = String(project.name || "")
         deleteProjectLegacy = project.legacy_workspace === true
         deleteProjectDialog.open()
+    }
+    function requestProjectLifecycle(project) {
+        lifecycleProject = project
+        lifecycleName.text = String(project.name || "")
+        duplicateName.text = String(project.name || "") + " Copy"
+        lifecycleDialog.open()
+    }
+    function requestProjectCleanup(target) {
+        cleanupTarget = target
+        cleanupDialog.open()
+    }
+    function requestPermanentDelete(project) {
+        purgeProjectId = String(project.project_id || "")
+        purgeProjectName = String(project.name || "")
+        purgeProjectBytes = Number(project.estimated_bytes || 0)
+        purgeEstimateDialog.open()
+    }
+    function formatBytes(value) {
+        var bytes = Math.max(0, Number(value || 0))
+        if (bytes < 1024) return Math.round(bytes) + " B"
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KiB"
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MiB"
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GiB"
     }
     function openProAcceptance(path) { prepareProSource(path); acceptanceProPending = true; backend.beginVideoImport(path) }
     function applyProDraft() {
@@ -491,6 +519,221 @@ ApplicationWindow {
                         var target = deleteProjectId
                         deleteProjectDialog.accept()
                         backend.deleteProject(target)
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: lifecycleDialog
+        title: "Project lifecycle"
+        modal: true
+        anchors.centerIn: parent
+        width: 620
+        padding: 0
+        background: GfPanel { tokens: theme; raised: true }
+        contentItem: ColumnLayout {
+            spacing: theme.space12
+            Item { Layout.fillWidth: true; Layout.preferredHeight: 10 }
+            Text {
+                text: lifecycleProject.name || "Project"
+                color: theme.text; font.pixelSize: 18; font.weight: Font.DemiBold
+                Layout.leftMargin: 22
+            }
+            Text {
+                text: "Display name"
+                color: theme.textSecondary; font.pixelSize: theme.typeCaption
+                Layout.leftMargin: 22
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                GfTextField { id: lifecycleName; tokens: theme; Layout.fillWidth: true }
+                GfButton {
+                    tokens: theme; text: "Rename"
+                    enabled: lifecycleName.text.trim() !== "" && lifecycleProject.status !== "running"
+                    onClicked: backend.renameProject(lifecycleProject.project_id, lifecycleName.text.trim())
+                }
+            }
+            Text {
+                text: "Independent copy"
+                color: theme.textSecondary; font.pixelSize: theme.typeCaption
+                Layout.leftMargin: 22; Layout.topMargin: 4
+            }
+            GfTextField {
+                id: duplicateName; tokens: theme
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                GfButton {
+                    tokens: theme; text: "Copy Inputs & Settings"; Layout.fillWidth: true
+                    enabled: duplicateName.text.trim() !== "" && lifecycleProject.status !== "running"
+                    onClicked: {
+                        lifecycleDialog.accept()
+                        backend.duplicateProject(lifecycleProject.project_id, duplicateName.text.trim(), "inputs")
+                    }
+                }
+                GfButton {
+                    tokens: theme; text: "Copy Complete Valid Project"; Layout.fillWidth: true
+                    enabled: duplicateName.text.trim() !== "" && lifecycleProject.status === "succeeded"
+                    onClicked: {
+                        lifecycleDialog.accept()
+                        backend.duplicateProject(lifecycleProject.project_id, duplicateName.text.trim(), "complete")
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider; Layout.topMargin: 4 }
+            Text {
+                text: "Selective cleanup"
+                color: theme.textSecondary; font.pixelSize: theme.typeCaption
+                Layout.leftMargin: 22
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                GfButton { tokens: theme; text: "Reconstruction"; compact: true; enabled: lifecycleProject.status !== "running"; onClicked: requestProjectCleanup("reconstruction") }
+                GfButton { tokens: theme; text: "Training"; compact: true; enabled: lifecycleProject.status !== "running"; onClicked: requestProjectCleanup("training") }
+                GfButton { tokens: theme; text: "Viewer / Timeline"; compact: true; enabled: lifecycleProject.status !== "running"; onClicked: requestProjectCleanup("viewer") }
+                GfButton { tokens: theme; text: "Exports"; compact: true; enabled: lifecycleProject.status !== "running"; onClicked: requestProjectCleanup("exports") }
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
+                GfButton {
+                    tokens: theme
+                    text: lifecycleProject.archived ? "Unarchive" : "Archive"
+                    enabled: lifecycleProject.status !== "running"
+                    onClicked: {
+                        backend.setProjectArchived(lifecycleProject.project_id, !lifecycleProject.archived)
+                        lifecycleDialog.accept()
+                    }
+                }
+                GfButton {
+                    tokens: theme; text: "Move to Trash"
+                    enabled: lifecycleProject.status !== "running"
+                    onClicked: {
+                        lifecycleDialog.accept()
+                        requestProjectDelete(lifecycleProject)
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                GfButton { tokens: theme; text: "Close"; onClicked: lifecycleDialog.reject() }
+            }
+        }
+    }
+
+    Dialog {
+        id: cleanupDialog
+        title: "Clear project files"
+        modal: true
+        anchors.centerIn: parent
+        width: 520
+        padding: 0
+        background: GfPanel { tokens: theme; raised: true }
+        contentItem: ColumnLayout {
+            spacing: theme.space16
+            Item { Layout.fillWidth: true; Layout.preferredHeight: 10 }
+            Text {
+                text: "Clear " + cleanupTarget + " outputs for “" + (lifecycleProject.name || "") + "”?"
+                color: theme.text; font.pixelSize: 18; font.weight: Font.DemiBold
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap
+            }
+            Text {
+                text: "Original inputs remain available. Published receipts are invalidated and downstream stages must be run again."
+                color: theme.textSecondary
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
+                Item { Layout.fillWidth: true }
+                GfButton { tokens: theme; text: "Cancel"; onClicked: cleanupDialog.reject() }
+                GfButton {
+                    tokens: theme; text: "Clear Files"; primary: true
+                    onClicked: {
+                        var projectId = lifecycleProject.project_id
+                        var target = cleanupTarget
+                        cleanupDialog.accept()
+                        lifecycleDialog.accept()
+                        backend.cleanupProject(projectId, target)
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: purgeEstimateDialog
+        title: "Permanent deletion"
+        modal: true
+        anchors.centerIn: parent
+        width: 520
+        padding: 0
+        background: GfPanel { tokens: theme; raised: true }
+        contentItem: ColumnLayout {
+            spacing: theme.space16
+            Item { Layout.fillWidth: true; Layout.preferredHeight: 10 }
+            Text {
+                text: "Permanently delete “" + purgeProjectName + "”?"
+                color: theme.text; font.pixelSize: 18; font.weight: Font.DemiBold
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap
+            }
+            Text {
+                text: "Estimated space to release: " + formatBytes(purgeProjectBytes) + ". This cannot be undone."
+                color: theme.warning
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
+                Item { Layout.fillWidth: true }
+                GfButton { tokens: theme; text: "Cancel"; onClicked: purgeEstimateDialog.reject() }
+                GfButton {
+                    tokens: theme; text: "Continue"
+                    onClicked: {
+                        purgeEstimateDialog.accept()
+                        purgeConfirmation.text = ""
+                        purgeConfirmDialog.open()
+                    }
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: purgeConfirmDialog
+        title: "Confirm permanent deletion"
+        modal: true
+        anchors.centerIn: parent
+        width: 520
+        padding: 0
+        background: GfPanel { tokens: theme; raised: true }
+        contentItem: ColumnLayout {
+            spacing: theme.space16
+            Item { Layout.fillWidth: true; Layout.preferredHeight: 10 }
+            Text {
+                text: "Type the project name to confirm: " + purgeProjectName
+                color: theme.text
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap
+            }
+            GfTextField {
+                id: purgeConfirmation; tokens: theme
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
+                Item { Layout.fillWidth: true }
+                GfButton { tokens: theme; text: "Cancel"; onClicked: purgeConfirmDialog.reject() }
+                GfButton {
+                    tokens: theme; text: "Delete Forever"; primary: true
+                    enabled: purgeConfirmation.text === purgeProjectName
+                    onClicked: {
+                        var target = purgeProjectId
+                        purgeConfirmDialog.accept()
+                        backend.purgeProject(target)
                     }
                 }
             }
@@ -914,22 +1157,51 @@ ApplicationWindow {
                                     Text { anchors.centerIn: parent; text: "◇"; color: highlighted ? theme.accent : theme.textSecondary; font.pixelSize: 15 }
                                 }
                                 ColumnLayout { Layout.fillWidth: true; spacing: 2
-                                    Text { Layout.fillWidth: true; text: modelData.name; color: theme.text; font.weight: Font.DemiBold; font.pixelSize: theme.typeBody; elide: Text.ElideRight }
-                                    Text { text: modelData.status.toUpperCase() + "  ·  " + Math.round((modelData.progress || 0) * 100) + "%"; color: statusColor(modelData.status); font.pixelSize: theme.typeCaption }
+                                    Text { Layout.fillWidth: true; text: modelData.name; color: modelData.archived ? theme.textDisabled : theme.text; font.weight: Font.DemiBold; font.pixelSize: theme.typeBody; elide: Text.ElideRight }
+                                    Text { text: modelData.archived ? "ARCHIVED" : modelData.status.toUpperCase() + "  ·  " + Math.round((modelData.progress || 0) * 100) + "%"; color: modelData.archived ? theme.textTertiary : statusColor(modelData.status); font.pixelSize: theme.typeCaption }
                                 }
                                 GfButton {
                                     tokens: theme
-                                    text: "Delete"
+                                    text: "Manage"
                                     quiet: true
                                     compact: true
                                     enabled: modelData.status !== "running"
-                                    toolTip: modelData.status === "running" ? "Cancel and wait before deleting" : "Move project to GaussianOS trash"
-                                    onClicked: requestProjectDelete(modelData)
+                                    toolTip: modelData.status === "running" ? "Running projects have limited lifecycle actions" : "Rename, copy, archive, clean, or delete"
+                                    onClicked: requestProjectLifecycle(modelData)
                                 }
                                 Text { text: highlighted ? "›" : ""; color: theme.textSecondary; font.pixelSize: 18 }
                             }
                         }
                         Text { anchors.centerIn: parent; visible: projectList.count === 0; text: "No projects yet"; color: theme.textTertiary; font.pixelSize: theme.typeSmall }
+                    }
+                    Text {
+                        text: "TRASH"
+                        visible: trashList.count > 0
+                        color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold
+                        Layout.leftMargin: 18; Layout.topMargin: 10; Layout.bottomMargin: 4
+                    }
+                    ListView {
+                        id: trashList
+                        visible: count > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Math.min(112, contentHeight)
+                        clip: true; leftMargin: 10; rightMargin: 10; spacing: 3
+                        model: JSON.parse(backend ? (backend.trashJson || "[]") : "[]")
+                        delegate: ItemDelegate {
+                            required property var modelData
+                            width: trashList.width - 20; height: 46; hoverEnabled: true
+                            background: Rectangle { radius: theme.radiusMedium; color: hovered ? theme.controlHover : "transparent" }
+                            contentItem: RowLayout {
+                                spacing: 6
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 1
+                                    Text { Layout.fillWidth: true; text: modelData.name; color: theme.textSecondary; elide: Text.ElideRight; font.pixelSize: theme.typeSmall }
+                                    Text { text: formatBytes(modelData.estimated_bytes); color: theme.textTertiary; font.pixelSize: theme.typeCaption }
+                                }
+                                GfButton { tokens: theme; text: "Restore"; quiet: true; compact: true; onClicked: backend.restoreProject(modelData.project_id) }
+                                GfButton { tokens: theme; text: "Delete Forever"; quiet: true; compact: true; onClicked: requestPermanentDelete(modelData) }
+                            }
+                        }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider; Layout.topMargin: 12 }
                     Text { text: "ARTIFACTS"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 18; Layout.topMargin: 16; Layout.bottomMargin: 9 }
