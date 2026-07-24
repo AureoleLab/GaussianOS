@@ -32,6 +32,20 @@ uv run gaussian-factory-gui
 .\scripts\build_portable.ps1
 ```
 
+The launcher defaults to ModernUI while retaining the production ClassicUI
+compatibility shell:
+
+```powershell
+.\start_gaussian_os.bat --ui modern
+.\start_gaussian_os.bat --ui classic
+.\start_gaussian_os.bat --safe-ui
+```
+
+Command-line selection takes precedence over the persisted preference. If the
+Modern QML root cannot load, startup records the QML error in
+`~/.gaussian-factory/logs/desktop-ui.log` and loads ClassicUI in a fresh QML
+engine. Interface changes made in Settings take effect after restart.
+
 The production profile excludes research-only workers and unapproved models.
 Never commit project data, model weights, runtime directories, generated PLY or
 SceneBundle assets, videos, caches, or credentials.

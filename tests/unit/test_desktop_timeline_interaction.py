@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-QML = Path(__file__).resolve().parents[2] / "apps" / "desktop" / "qml"
+QML = Path(__file__).resolve().parents[2] / "apps" / "desktop" / "qml" / "classic"
 
 
 def test_pro_preview_is_user_started_and_restores_position() -> None:

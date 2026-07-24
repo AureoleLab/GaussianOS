@@ -24,6 +24,7 @@ from .project_store import (
 from .project_session import AsyncIdentity, ProjectSession
 from .viewer import ViewerScene, load_viewer_scene
 from .sampling import discover_ffprobe
+from .ui_settings import UI_CHOICES, UiSettingsStore, resolve_ui
 from .video_import import VideoImportSession
 
 
@@ -57,7 +58,7 @@ def project_view(project: Project) -> dict[str, Any]:
 def _qt():
     try:
         from PySide6.QtCore import QByteArray, QBuffer, QIODevice, QObject, Property, QTimer, Qt, QUrl, Signal, Slot
-        from PySide6.QtGui import QDesktopServices, QGuiApplication
+        from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QGuiApplication
         from PySide6.QtQml import QQmlApplicationEngine
         from PySide6.QtQuickControls2 import QQuickStyle
         from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineUrlRequestJob, QWebEngineUrlScheme, QWebEngineUrlSchemeHandler
@@ -75,11 +76,56 @@ def main() -> int:
     default_state = portable_data if getattr(sys, "frozen", False) else Path.home() / ".gaussian-factory"
     parser.add_argument("--projects", type=Path, default=default_state / "projects")
     parser.add_argument("--artifacts", type=Path, default=default_state / "artifact-store")
+    parser.add_argument(
+        "--ui",
+        choices=UI_CHOICES,
+        help="select the Modern or Classic desktop shell for this launch",
+    )
+    parser.add_argument(
+        "--safe-ui",
+        action="store_true",
+        help="force the Classic compatibility shell for this launch",
+    )
     parser.add_argument("--acceptance-evidence", type=Path, help="capture a real rendered GUI after exercising viewer controls")
     parser.add_argument("--acceptance-delay-ms", type=int, default=12_000, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-import-video", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-import-pro", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-camera-timeline", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--acceptance-theme",
+        choices=("light", "dark", "system"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--acceptance-density",
+        choices=("compact", "standard", "comfortable"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--acceptance-weight",
+        choices=("light", "balanced", "strong"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--acceptance-page",
+        choices=("workspace", "library"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--acceptance-dialog",
+        choices=("settings", "new-project"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--acceptance-force-modern-failure",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--acceptance-ui-settings",
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--doctor", action="store_true", help="check the portable runtime without starting the GUI")
     parser.add_argument("--runtime-list", action="store_true", help="list locked portable runtime assets")
     parser.add_argument("--runtime-install", action="append", default=[], metavar="ASSET_ID", help="download and verify a locked runtime asset")
@@ -168,6 +214,31 @@ def main() -> int:
         if getattr(sys, "frozen", False):
             (Path(sys.executable).resolve().parent / "doctor-report.txt").write_text(report + "\n", encoding="utf-8")
         return 0 if not messages else 2
+    ui_settings = UiSettingsStore(
+        args.acceptance_ui_settings or default_state / "ui-settings.json"
+    )
+    ui_selection = resolve_ui(
+        args.ui,
+        safe_ui=args.safe_ui,
+        persisted=ui_settings.preferred_ui,
+    )
+    ui_log_path = default_state / "logs" / "desktop-ui.log"
+
+    def record_ui(message: str) -> None:
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        line = f"{stamp} {message}"
+        print(f"[GaussianOS] {message}", file=sys.stderr)
+        try:
+            ui_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with ui_log_path.open("a", encoding="utf-8", newline="\n") as stream:
+                stream.write(line + "\n")
+        except OSError:
+            # A read-only portable location must not prevent Classic fallback.
+            pass
+
+    record_ui(
+        f"UI selection resolved to {ui_selection.name} ({ui_selection.source})"
+    )
     qt = _qt()
     globals().update(qt)
     scheme = QWebEngineUrlScheme(b"gaussian")
@@ -183,6 +254,23 @@ def main() -> int:
     QtWebEngineQuick.initialize()
     QQuickStyle.setStyle("Fusion")
     app = QGuiApplication(sys.argv)
+    font_names = (
+        "Montserrat-Regular.ttf",
+        "Montserrat-Medium.ttf",
+        "Montserrat-SemiBold.ttf",
+        "Montserrat-Bold.ttf",
+    )
+    font_roots = (
+        Path(sys.executable).resolve().parent / "fonts",
+        Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Fonts",
+        Path("C:/Windows/Fonts"),
+    )
+    for root in font_roots:
+        for name in font_names:
+            candidate = root / name
+            if candidate.exists():
+                QFontDatabase.addApplicationFont(str(candidate))
+    app.setFont(QFont("Montserrat", 10))
     store = ProjectStore(args.projects)
     controller = PipelineController(store, args.artifacts)
     try:
@@ -195,6 +283,7 @@ def main() -> int:
         lifecycle_recovery = controller.recover_lifecycle_residuals()
     except Exception as exc:
         lifecycle_recovery = [f"Lifecycle recovery warning: {exc}"]
+    runtime_messages = doctor()
 
     class ViewerSchemeHandler(QWebEngineUrlSchemeHandler):
         def __init__(self) -> None:
@@ -262,6 +351,8 @@ def main() -> int:
         importChanged = Signal()
         viewerUrlChanged = Signal()
         viewerStatusChanged = Signal()
+        settingsChanged = Signal()
+        activeUiChanged = Signal()
         event = Signal(str, str, object)
         acceptanceRequested = Signal()
 
@@ -272,9 +363,11 @@ def main() -> int:
             # Welcome surface until the user explicitly opens one.
             self.session = ProjectSession()
             self.logs: list[str] = [
-                *[f"Runtime doctor: {message}" for message in doctor()],
+                f"UI shell: {ui_selection.name} ({ui_selection.source})",
+                *[f"Runtime doctor: {message}" for message in runtime_messages],
                 *lifecycle_recovery,
             ]
+            self.active_ui = ui_selection.name
             self.viewer_url = "about:blank"
             self.viewer_status = "Select a completed project to load its Gaussian artifact"
             self.viewer_revision = 0
@@ -375,9 +468,60 @@ def main() -> int:
         @Property(str, notify=viewerStatusChanged)
         def viewerStatus(self) -> str: return self.viewer_status
 
+        @Property(str, notify=settingsChanged)
+        def preferredUi(self) -> str:
+            return ui_settings.preferred_ui or "modern"
+
+        @Property(str, notify=activeUiChanged)
+        def activeUi(self) -> str:
+            return self.active_ui
+
+        @Property(str, notify=settingsChanged)
+        def settingsJson(self) -> str:
+            return json.dumps(
+                {
+                    "preferred_ui": self.preferredUi,
+                    "active_ui": self.active_ui,
+                    "restart_required": self.preferredUi != self.active_ui,
+                    "path": str(ui_settings.path),
+                },
+                ensure_ascii=False,
+            )
+
+        @Property(str, constant=True)
+        def runtimeJson(self) -> str:
+            return json.dumps(
+                {
+                    "status": "ok" if not runtime_messages else "attention",
+                    "messages": runtime_messages,
+                },
+                ensure_ascii=False,
+            )
+
         @Property(str, notify=importChanged)
         def importJson(self) -> str:
             return json.dumps(self.import_state, ensure_ascii=False)
+
+        def _set_active_ui(self, value: str) -> None:
+            if self.active_ui == value:
+                return
+            self.active_ui = value
+            self.logs.append(f"UI shell changed during startup fallback: {value}")
+            self.activeUiChanged.emit()
+            self.settingsChanged.emit()
+            self.changed.emit()
+
+        @Slot(str)
+        def setPreferredUi(self, value: str) -> None:
+            try:
+                ui_settings.set_preferred_ui(value)
+                self.logs.append(
+                    f"Preferred UI set to {value}; restart required to apply"
+                )
+            except (OSError, ValueError) as exc:
+                self.logs.append(f"UI preference update failed: {exc}")
+            self.settingsChanged.emit()
+            self.changed.emit()
 
         @Property(bool, constant=True)
         def acceptanceCameraTimeline(self) -> bool:
@@ -777,6 +921,23 @@ def main() -> int:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
 
         @Slot(str)
+        def openProjectFolder(self, project_id: str) -> None:
+            try:
+                project = store.load(project_id)
+                destination = Path(project.root)
+            except Exception as exc:
+                self.logs.append(f"Could not open project folder: {exc}")
+                self.changed.emit()
+                return
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
+
+        @Slot()
+        def openProjectsFolder(self) -> None:
+            QDesktopServices.openUrl(
+                QUrl.fromLocalFile(str(args.projects.resolve().parent))
+            )
+
+        @Slot(str)
         def deleteProject(self, project_id: str) -> None:
             try:
                 target = store.load(project_id)
@@ -1098,24 +1259,74 @@ def main() -> int:
     # Pipeline threads emit this signal; force queued delivery to Backend's Qt
     # thread so no Worker ever updates a QML-bound property directly.
     backend.event.connect(backend.handleEvent, Qt.QueuedConnection)
-    engine = QQmlApplicationEngine()
-    engine.rootContext().setContextProperty("backend", backend)
-    qml = Path(__file__).with_name("qml") / "Main.qml"
-    engine.load(QUrl.fromLocalFile(str(qml)))
-    if not engine.rootObjects(): return 2
+
+    def load_shell(name: str) -> tuple[Any, list[str]]:
+        shell_engine = QQmlApplicationEngine()
+        warnings: list[str] = []
+        shell_engine.warnings.connect(
+            lambda values: warnings.extend(str(value) for value in values)
+        )
+        context = shell_engine.rootContext()
+        context.setContextProperty("backend", backend)
+        context.setContextProperty("startupWidth", 1600)
+        context.setContextProperty("startupHeight", 900)
+        context.setContextProperty("startupTheme", "light")
+        context.setContextProperty("useSavedSettings", True)
+        qml_name = (
+            "MissingAcceptanceRoot.qml"
+            if name == "modern" and args.acceptance_force_modern_failure
+            else "Main.qml"
+        )
+        qml = Path(__file__).with_name("qml") / name / qml_name
+        record_ui(f"Loading {name} shell from {qml}")
+        shell_engine.load(QUrl.fromLocalFile(str(qml)))
+        return shell_engine, warnings
+
+    engine, shell_warnings = load_shell(ui_selection.name)
+    if not engine.rootObjects() and ui_selection.name == "modern":
+        detail = " | ".join(shell_warnings[-8:]) or "no QML root object"
+        record_ui(f"ModernUI load failed; falling back to ClassicUI: {detail}")
+        backend.logs.append(
+            f"ModernUI load failed; ClassicUI fallback activated: {detail}"
+        )
+        engine.deleteLater()
+        engine, shell_warnings = load_shell("classic")
+        backend._set_active_ui("classic")
+    if not engine.rootObjects():
+        detail = " | ".join(shell_warnings[-8:]) or "no QML root object"
+        record_ui(f"{backend.active_ui} shell load failed: {detail}")
+        return 2
+    record_ui(f"{backend.active_ui} shell loaded successfully")
+    root = engine.rootObjects()[0]
+    if backend.active_ui == "modern":
+        if args.acceptance_theme:
+            root.setProperty("themeMode", args.acceptance_theme)
+        if args.acceptance_density:
+            root.setProperty("interfaceSize", args.acceptance_density)
+        if args.acceptance_weight:
+            root.setProperty("typographyWeight", args.acceptance_weight)
+        if args.acceptance_page:
+            root.setProperty("currentPage", args.acceptance_page)
+        if args.acceptance_dialog:
+            dialog_name = (
+                "settingsDialog"
+                if args.acceptance_dialog == "settings"
+                else "newProjectDialog"
+            )
+            dialog = root.findChild(QObject, dialog_name)
+            if dialog is not None:
+                QTimer.singleShot(100, dialog.open)
     # Explicit acceptance capture is a diagnostic mode rather than a normal
     # launch, so it may open the newest project to exercise the real Viewer.
     if args.acceptance_evidence and backend.projects and not args.acceptance_import_video:
         backend._activate_project(backend.projects[0].project_id)
     if args.acceptance_import_video:
-        root = engine.rootObjects()[0]
         method = root.openProAcceptance if args.acceptance_import_pro else root.beginVideo
         QTimer.singleShot(250, lambda: method(str(args.acceptance_import_video.resolve())))
     if args.acceptance_evidence:
         def acceptance_deadline() -> None:
             destination = args.acceptance_evidence.resolve()
             destination.parent.mkdir(parents=True, exist_ok=True)
-            root = engine.rootObjects()[0]
             root.grabWindow().save(str(destination))
             app.quit()
         QTimer.singleShot(max(1_000, args.acceptance_delay_ms), acceptance_deadline)

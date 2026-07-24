@@ -13,7 +13,7 @@ if errorlevel 1 (
 )
 
 echo [GaussianOS] Starting desktop application...
-uv run --extra desktop gaussian-factory-gui
+uv run --extra desktop gaussian-factory-gui %*
 set "exit_code=%errorlevel%"
 
 if not "%exit_code%"=="0" (

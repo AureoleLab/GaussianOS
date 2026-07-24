@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-QML = Path(__file__).resolve().parents[2] / "apps" / "desktop" / "qml"
+DESKTOP = Path(__file__).resolve().parents[2] / "apps" / "desktop"
+QML = DESKTOP / "qml" / "classic"
 
 
 def test_p29_design_tokens_cover_global_themes_and_states() -> None:
@@ -32,7 +33,7 @@ def test_p29_uses_one_theme_for_every_qml_surface() -> None:
 
 def test_p29_preserves_frontend_backend_actions_and_viewer_identity() -> None:
     main = (QML / "Main.qml").read_text(encoding="utf-8")
-    viewer = (QML.parent / "viewer_web" / "index.html").read_text(encoding="utf-8")
+    viewer = (DESKTOP / "viewer_web" / "index.html").read_text(encoding="utf-8")
 
     for action in (
         "createProject", "selectProject", "beginVideoImport", "configureVideoImport",
@@ -70,7 +71,7 @@ def test_p29_workspace_is_resizable_animated_and_persistent() -> None:
 
 def test_startup_defaults_to_welcome_and_restore_is_opt_in() -> None:
     main = (QML / "Main.qml").read_text(encoding="utf-8")
-    backend = (QML.parent / "main.py").read_text(encoding="utf-8")
+    backend = (DESKTOP / "main.py").read_text(encoding="utf-8")
 
     assert 'property bool restoreLastProject: false' in main
     assert 'text: "Restore last project at startup"' in main
@@ -98,7 +99,7 @@ def test_new_project_folder_supports_native_browse_and_manual_entry() -> None:
 
 def test_p30_project_switch_and_soft_delete_are_explicit() -> None:
     main = (QML / "Main.qml").read_text(encoding="utf-8")
-    backend = (QML.parent / "main.py").read_text(encoding="utf-8")
+    backend = (DESKTOP / "main.py").read_text(encoding="utf-8")
 
     assert 'text: "Move “" + deleteProjectName + "” to trash?"' in main
     assert "backend.deleteProject(target)" in main
@@ -120,7 +121,7 @@ def test_media_position_signal_uses_explicit_qml_handler_parameters() -> None:
 
 def test_p31_lifecycle_cleanup_and_permanent_delete_are_explicit() -> None:
     main = (QML / "Main.qml").read_text(encoding="utf-8")
-    backend = (QML.parent / "main.py").read_text(encoding="utf-8")
+    backend = (DESKTOP / "main.py").read_text(encoding="utf-8")
 
     for action in (
         "renameProject",

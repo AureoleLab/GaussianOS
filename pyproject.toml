@@ -40,7 +40,11 @@ include = ["apps*", "benchmarks*", "packages*", "workers*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-"apps.desktop" = ["qml/*.qml", "viewer_web/*.html"]
+"apps.desktop" = [
+  "qml/**/*.qml",
+  "qml/**/*.svg",
+  "viewer_web/*.html",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

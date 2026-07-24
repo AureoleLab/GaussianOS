@@ -843,6 +843,28 @@ ApplicationWindow {
                 Layout.leftMargin: 22; Layout.rightMargin: 22
                 onToggled: window.restoreLastProject = checked
             }
+            Text { text: "INTERFACE · RESTART REQUIRED"; color: theme.textSecondary; font.pixelSize: theme.typeCaption; font.weight: Font.DemiBold; Layout.leftMargin: 22 }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                Repeater {
+                    model: [{"id":"modern","label":"Modern"},{"id":"classic","label":"Classic"}]
+                    GfButton {
+                        required property var modelData
+                        tokens: theme
+                        text: modelData.label
+                        primary: backend.preferredUi === modelData.id
+                        Layout.fillWidth: true
+                        onClicked: backend.setPreferredUi(modelData.id)
+                    }
+                }
+            }
+            Text {
+                Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                wrapMode: Text.Wrap; color: theme.textSecondary
+                text: backend.preferredUi === backend.activeUi
+                    ? "Active shell: " + backend.activeUi
+                    : "Restart GaussianOS to activate " + backend.preferredUi + " UI."
+            }
             GfButton { tokens: theme; text: "Reset Workspace Layout"; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.fillWidth: true; onClicked: resetLayout() }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
             Text { text: "Runtime paths are discovered from the locked P2 environment.\nRenderer: Qt WebEngine · WebGL2"; color: theme.textSecondary; Layout.leftMargin: 22; lineHeight: 1.45 }
