@@ -41,6 +41,9 @@ QtObject {
     readonly property color warningSoft: dark ? "#2D2A22" : "#F2F0E9"
     readonly property color danger: dark ? "#AE8585" : "#835C5C"
     readonly property color dangerSoft: dark ? "#302727" : "#F2ECEC"
+    // Error is the semantic name used by status and import surfaces. It was
+    // missing during the ModernUI migration, leaving QColor bindings undefined.
+    readonly property color error: danger
     readonly property color info: dark ? "#A0A0A0" : "#696969"
 
     readonly property color line: dark ? "#3A3A3A" : "#D7D7D7"

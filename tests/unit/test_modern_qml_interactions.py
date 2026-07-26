@@ -102,13 +102,105 @@ def test_shared_controls_cover_interaction_states() -> None:
         assert "inkDisabled" in source or "opacity: enabled ? 1 : 0.46" in source
 
     combo = (COMPONENTS / "ComboField.qml").read_text(encoding="utf-8-sig")
-    assert "highlighted: hovered || root.highlightedIndex === index" in combo
+    assert "required property int index" in combo
+    assert "highlighted: hovered || root.highlightedIndex === delegateRoot.index" in combo
+    assert "text: root.textAt(delegateRoot.index)" in combo
     assert "delegateRoot.down ? theme.controlPressed" in combo
     assert "delegateRoot.visualFocus ? 1 : 0" in combo
 
     card = (COMPONENTS / "ChoiceCard.qml").read_text(encoding="utf-8-sig")
     for state in ("root.down", "root.selected", "root.hovered", "root.visualFocus", "root.enabled"):
         assert state in card
+
+
+def test_error_color_token_and_combo_delegate_are_runtime_safe() -> None:
+    theme = (MODERN / "design" / "Theme.qml").read_text(encoding="utf-8-sig")
+    main = (MODERN / "Main.qml").read_text(encoding="utf-8-sig")
+
+    assert "readonly property color error: danger" in theme
+    assert "color: theme.error" in main
+
+    script = r'''
+from PySide6.QtCore import QByteArray, QUrl, qInstallMessageHandler
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtTest import QTest
+
+messages = []
+qInstallMessageHandler(lambda _kind, _context, message: messages.append(message))
+app = QGuiApplication([])
+engine = QQmlEngine()
+qml = r"""
+import QtQuick
+import QtQuick.Controls
+import "__DESIGN__" as Design
+import "__COMPONENTS__" as UI
+ApplicationWindow {
+    width: 320
+    height: 180
+    visible: true
+    Design.Motion { id: motion }
+    Design.Density { id: density }
+    Design.Theme { id: theme; motion: motion; density: density }
+    Design.Typography { id: typography; densityMode: density.mode }
+    UI.ComboField {
+        id: combo
+        objectName: "combo"
+        anchors.centerIn: parent
+        width: 220
+        theme: theme
+        type: typography
+        model: ["Modified", "Name", "Size"]
+    }
+    Component.onCompleted: combo.popup.open()
+}
+"""
+component = QQmlComponent(engine)
+component.setData(
+    QByteArray(qml.encode()),
+    QUrl("file:///gaussianos/combo_runtime_smoke.qml"),
+)
+if component.status() != QQmlComponent.Ready:
+    raise RuntimeError("\n".join(error.toString() for error in component.errors()))
+window = component.create()
+app.processEvents()
+QTest.qWait(250)
+bad = [message for message in messages if "ReferenceError" in message or "index is not defined" in message]
+assert not bad, bad
+print("combo-runtime-safe")
+window.close()
+'''
+    output = run_qml_probe(
+        script.replace("__DESIGN__", (MODERN / "design").as_uri()).replace(
+            "__COMPONENTS__", COMPONENTS.as_uri()
+        )
+    )
+    assert "combo-runtime-safe" in output
+
+
+def test_directory_actions_pass_only_project_and_run_identity_to_backend() -> None:
+    main = (MODERN / "Main.qml").read_text(encoding="utf-8-sig")
+    inspector = (COMPONENTS / "Inspector.qml").read_text(encoding="utf-8-sig")
+    library = (COMPONENTS / "ProjectLibrary.qml").read_text(encoding="utf-8-sig")
+    sidebar = (COMPONENTS / "Sidebar.qml").read_text(encoding="utf-8-sig")
+
+    for action in (
+        "openProjectDirectory",
+        "openLibraryDirectory",
+        "openRunDirectory",
+        "openInputsDirectory",
+        "openArtifactsDirectory",
+        "openExportsDirectory",
+    ):
+        assert f"backend.{action}" in main
+    assert "backend.openProjectFolder" not in main
+    assert "backend.openProjectsFolder" not in main
+    assert "backend.openExportFolder" not in main
+    assert '"location": String(project.workspace_path || "")' in main
+    assert "project.root || project.internal_workspace" not in main
+    assert 'title: "Files"' in inspector
+    assert "selectedLibraryPath" in library
+    assert "enabled: !!root.currentProjectId && root.libraryPath.length > 0" in sidebar
 
 
 def test_motion_tokens_and_critical_surfaces_are_non_linear_and_reduced() -> None:

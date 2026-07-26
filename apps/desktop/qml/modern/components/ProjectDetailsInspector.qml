@@ -10,6 +10,7 @@ Rectangle {
     property var project: ({})
     signal openProjectRequested(var project)
     signal openFolderRequested(var project)
+    signal openLibraryRequested(var project)
     signal renameRequested(var project)
     signal duplicateRequested(var project)
     signal archiveRequested(var project, bool archived)
@@ -147,9 +148,17 @@ Rectangle {
                     visible: !!root.project.project_id && root.project.group !== "trash"
                     theme: root.theme; type: root.type
                     Layout.fillWidth: true
-                    text: "Open directory"
+                    text: "Open workspace"
                     iconName: "folder"
                     onClicked: root.openFolderRequested(root.project)
+                }
+                ToolbarButton {
+                    visible: !!root.project.library_path && root.project.group !== "trash"
+                    theme: root.theme; type: root.type
+                    Layout.fillWidth: true
+                    text: "Open library"
+                    iconName: "library"
+                    onClicked: root.openLibraryRequested(root.project)
                 }
                 RowLayout {
                     visible: !!root.project.project_id

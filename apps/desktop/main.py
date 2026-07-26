@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from .pipeline import PipelineController, RuntimePaths, STAGES, TERMINAL_STAGE_STATES
+from .directory_opening import DirectoryOpenResult, ProjectDirectoryService
+from .project_paths import ProjectPaths
 from .project_store import (
     Project,
     ProjectDeleteError,
@@ -51,8 +53,26 @@ def project_view(project: Project) -> dict[str, Any]:
         sampling["timeline"] = sampling["camera_timeline"]
     value["legacy_shared_workspace"] = project.workspace_kind == "legacy_shared"
     value["legacy_workspace"] = project.workspace_kind != "isolated"
-    value["internal_workspace"] = project.root
+    paths = ProjectPaths.from_project(project)
+    value["workspace_path"] = str(paths.workspace)
+    value["library_path"] = str(paths.library_root) if project.library_root else ""
+    value["internal_workspace"] = str(paths.workspace)
+    if project.run_id:
+        run_root = paths.run(project.run_id).root
+        value["active_run_path"] = str(run_root)
+        value["active_run_status"] = "available" if run_root.is_dir() else "stale"
+    else:
+        value["active_run_path"] = ""
+        value["active_run_status"] = "none"
     return value
+
+
+def _configure_application_identity(application: Any) -> None:
+    """Set identifiers before construction so QML Settings can persist."""
+
+    application.setOrganizationName("AureoleLab")
+    application.setOrganizationDomain("gaussianos.com")
+    application.setApplicationName("GaussianOS")
 
 
 def _qt():
@@ -253,6 +273,7 @@ def main() -> int:
     QWebEngineUrlScheme.registerScheme(scheme)
     QtWebEngineQuick.initialize()
     QQuickStyle.setStyle("Fusion")
+    _configure_application_identity(QGuiApplication)
     app = QGuiApplication(sys.argv)
     font_names = (
         "Montserrat-Regular.ttf",
@@ -273,6 +294,10 @@ def main() -> int:
     app.setFont(QFont("Montserrat", 10))
     store = ProjectStore(args.projects)
     controller = PipelineController(store, args.artifacts)
+    directory_service = ProjectDirectoryService(
+        store,
+        lambda path: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))),
+    )
     try:
         controller.recover_interrupted_projects()
     except Exception:
@@ -660,6 +685,12 @@ def main() -> int:
             self.projects = store.all()
             self.changed.emit()
 
+        def _report_directory_result(self, result: DirectoryOpenResult) -> None:
+            if result.status == "duplicate":
+                return
+            self.logs.append(result.message)
+            self.changed.emit()
+
         @Slot(str, str)
         def createProject(self, name: str, root: str) -> None:
             if not name.strip() or not root.strip():
@@ -913,28 +944,40 @@ def main() -> int:
                 self.viewer_status = "Run the pipeline to create a viewable Gaussian artifact"
                 self.viewerStatusChanged.emit()
 
-        @Slot()
-        def openExportFolder(self) -> None:
-            project = self._project()
-            if project is not None and project.run_id:
-                destination = store.paths(project).run(project.run_id).exports
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
+        @Slot(str)
+        def openProjectDirectory(self, project_id: str) -> None:
+            self._report_directory_result(
+                directory_service.open(project_id, "workspace")
+            )
 
         @Slot(str)
-        def openProjectFolder(self, project_id: str) -> None:
-            try:
-                project = store.load(project_id)
-                destination = Path(project.root)
-            except Exception as exc:
-                self.logs.append(f"Could not open project folder: {exc}")
-                self.changed.emit()
-                return
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
+        def openLibraryDirectory(self, project_id: str) -> None:
+            self._report_directory_result(
+                directory_service.open(project_id, "library")
+            )
 
-        @Slot()
-        def openProjectsFolder(self) -> None:
-            QDesktopServices.openUrl(
-                QUrl.fromLocalFile(str(args.projects.resolve().parent))
+        @Slot(str, str)
+        def openRunDirectory(self, project_id: str, run_id: str) -> None:
+            self._report_directory_result(
+                directory_service.open(project_id, "run", run_id or None)
+            )
+
+        @Slot(str, str)
+        def openInputsDirectory(self, project_id: str, run_id: str) -> None:
+            self._report_directory_result(
+                directory_service.open(project_id, "inputs", run_id or None)
+            )
+
+        @Slot(str, str)
+        def openArtifactsDirectory(self, project_id: str, run_id: str) -> None:
+            self._report_directory_result(
+                directory_service.open(project_id, "artifacts", run_id or None)
+            )
+
+        @Slot(str, str)
+        def openExportsDirectory(self, project_id: str, run_id: str) -> None:
+            self._report_directory_result(
+                directory_service.open(project_id, "exports", run_id or None)
             )
 
         @Slot(str)

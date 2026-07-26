@@ -109,16 +109,16 @@ ComboBox {
     }
     delegate: ItemDelegate {
         id: delegateRoot
-        required property var model
+        required property int index
         width: root.width - 8
         height: 32
         hoverEnabled: true
         focusPolicy: Qt.StrongFocus
-        highlighted: hovered || root.highlightedIndex === index
+        highlighted: hovered || root.highlightedIndex === delegateRoot.index
         scale: down ? theme.motion.pressScale : 1
         opacity: enabled ? 1 : 0.46
         contentItem: Text {
-            text: model[root.textRole] || modelData
+            text: root.textAt(delegateRoot.index)
             color: delegateRoot.enabled ? theme.ink : theme.inkDisabled
             font.family: type.family
             font.pixelSize: type.labelSize

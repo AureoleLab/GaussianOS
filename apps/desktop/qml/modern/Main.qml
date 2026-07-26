@@ -110,7 +110,8 @@ ApplicationWindow {
             "group": group,
             "date": String(project.updated_at || project.deleted_at || project.archived_at || "—"),
             "size": formatBytes(project.estimated_bytes || 0),
-            "location": String(project.root || project.internal_workspace || ""),
+            "location": String(project.workspace_path || ""),
+            "library_path": String(project.library_path || ""),
             "profile": String(project.profile || "—"),
             "source": project.input_kind
                 ? String(project.input_kind) + (inputCount ? " · " + inputCount + " frames" : "")
@@ -382,7 +383,10 @@ ApplicationWindow {
                     iconName: "export"
                     compact: true
                     enabled: !!window.currentProjectId
-                    onClicked: backend.openExportFolder()
+                    onClicked: backend.openExportsDirectory(
+                        window.currentProjectId,
+                        String(window.current.run_id || "")
+                    )
                 }
 
                 Item { Layout.fillWidth: true }
@@ -467,14 +471,14 @@ ApplicationWindow {
                 currentProjectId: window.currentProjectId
                 projects: window.projects.filter(function(project) { return !project.archived })
                 artifacts: window.current.artifacts || []
-                libraryPath: window.projects.length > 0
-                    ? String(window.projects[0].library_root || "")
-                    : "No projects yet"
+                libraryPath: window.currentProjectId
+                    ? String(window.current.library_path || "")
+                    : "No project selected"
                 onPageSelected: function(page) { window.currentPage = page }
                 onProjectSelected: function(project) { window.openProject(window.presentProject(project, "active")) }
                 onManageProject: function(project) { window.manage(window.presentProject(project, "active")) }
                 onNewProject: newProjectDialog.open()
-                onOpenLibrary: backend.openProjectsFolder()
+                onOpenLibrary: backend.openLibraryDirectory(window.currentProjectId)
                 transform: Translate {
                     x: leftOpen ? 0 : -theme.motion.paneTravel
                     Behavior on x {
@@ -558,9 +562,9 @@ ApplicationWindow {
                     projectName: window.currentProject
                     running: window.running
                     notice: window.globalNotice
-                    viewerUrl: backend.viewerUrl
-                    viewerStatus: backend.viewerStatus
-                    logText: backend.logText
+                    viewerUrl: backend ? backend.viewerUrl : "about:blank"
+                    viewerStatus: backend ? backend.viewerStatus : ""
+                    logText: backend ? backend.logText : ""
                     timeline: (window.current.sampling || {}).timeline || []
                     activityLogHeight: window.effectiveActivityLogHeight
                     enabled: window.currentPage === "workspace"
@@ -572,7 +576,10 @@ ApplicationWindow {
                     onRunRequested: backend.start()
                     onCancelRequested: backend.cancel()
                     onLoadViewerRequested: backend.loadViewer()
-                    onExportRequested: backend.openExportFolder()
+                    onExportRequested: backend.openExportsDirectory(
+                        window.currentProjectId,
+                        String(window.current.run_id || "")
+                    )
                     onViewerTitleChanged: function(title) { backend.viewerPageTitle(title) }
                     onAcceptanceResult: function(result) { backend.viewerAcceptanceResult(result) }
                     onLogHeightAdjusted: function(value, reset) {
@@ -619,6 +626,7 @@ ApplicationWindow {
                     type: window.typeTokens
                     projects: window.libraryProjects
                     selectedProjectId: window.librarySelection.project_id || ""
+                    selectedLibraryPath: String(window.librarySelection.library_path || "")
                     enabled: window.currentPage === "library"
                     opacity: window.currentPage === "library" ? 1 : 0
                     x: window.currentPage === "library" ? 0 : theme.motion.pageTravel
@@ -627,8 +635,12 @@ ApplicationWindow {
                     onProjectSelected: function(project) {
                         window.librarySelection = project
                     }
-                    onOpenLibraryRequested: backend.openProjectsFolder()
-                    onOpenFolderRequested: function(project) { backend.openProjectFolder(project.project_id) }
+                    onOpenLibraryRequested: backend.openLibraryDirectory(
+                        String(window.librarySelection.project_id || "")
+                    )
+                    onOpenFolderRequested: function(project) {
+                        backend.openProjectDirectory(project.project_id)
+                    }
                     onRenameRequested: function(project) { window.manage(project) }
                     onDuplicateRequested: function(project) { window.manage(project) }
                     onArchiveRequested: function(project, archived) {
@@ -729,6 +741,16 @@ ApplicationWindow {
                             backend.setSampling(mode, requested, intervalValue, intervalUnit, inFrame, outFrame)
                         }
                         onAnalyzeRequested: backend.analyzeSampling()
+                        onOpenProjectDirectoryRequested: backend.openProjectDirectory(window.currentProjectId)
+                        onOpenLibraryDirectoryRequested: backend.openLibraryDirectory(window.currentProjectId)
+                        onOpenRunDirectoryRequested: backend.openRunDirectory(
+                            window.currentProjectId, String(window.current.run_id || ""))
+                        onOpenInputsDirectoryRequested: backend.openInputsDirectory(
+                            window.currentProjectId, String(window.current.run_id || ""))
+                        onOpenArtifactsDirectoryRequested: backend.openArtifactsDirectory(
+                            window.currentProjectId, String(window.current.run_id || ""))
+                        onOpenExportsDirectoryRequested: backend.openExportsDirectory(
+                            window.currentProjectId, String(window.current.run_id || ""))
                         enabled: window.currentPage === "workspace"
                         opacity: window.currentPage === "workspace" ? 1 : 0
                         x: window.currentPage === "workspace" ? 0 : -theme.motion.inspectorTravel
@@ -763,7 +785,12 @@ ApplicationWindow {
                         opacity: window.currentPage === "library" ? 1 : 0
                         x: window.currentPage === "library" ? 0 : theme.motion.inspectorTravel
                         onOpenProjectRequested: function(project) { window.openProject(project) }
-                        onOpenFolderRequested: function(project) { backend.openProjectFolder(project.project_id) }
+                        onOpenFolderRequested: function(project) {
+                            backend.openProjectDirectory(project.project_id)
+                        }
+                        onOpenLibraryRequested: function(project) {
+                            backend.openLibraryDirectory(project.project_id)
+                        }
                         onRenameRequested: function(project) { window.manage(project) }
                         onDuplicateRequested: function(project) { window.manage(project) }
                         onArchiveRequested: function(project, archived) {

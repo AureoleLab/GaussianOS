@@ -39,7 +39,7 @@ def test_p29_preserves_frontend_backend_actions_and_viewer_identity() -> None:
         "createProject", "selectProject", "beginVideoImport", "configureVideoImport",
         "generateVideoImport", "cancelVideoImport", "importInput", "setProfile",
         "setSampling", "analyzeSampling", "start", "cancel", "loadViewer",
-        "openExportFolder", "viewerPageTitle", "viewerAcceptanceResult",
+        "openExportsDirectory", "viewerPageTitle", "viewerAcceptanceResult",
     ):
         assert f"backend.{action}" in main
     assert 'objectName: "gaussianViewer"' in main

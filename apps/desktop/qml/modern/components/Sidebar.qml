@@ -178,6 +178,7 @@ Rectangle {
                     type: root.type
                     iconName: "chevron-right"
                     toolTip: "Open project library"
+                    enabled: !!root.currentProjectId && root.libraryPath.length > 0
                     onClicked: root.openLibrary()
                 }
             }

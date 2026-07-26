@@ -14,6 +14,12 @@ Rectangle {
     signal samplingRequested(string mode, int requested, real intervalValue,
                              string intervalUnit, int inFrame, int outFrame)
     signal analyzeRequested()
+    signal openProjectDirectoryRequested()
+    signal openLibraryDirectoryRequested()
+    signal openRunDirectoryRequested()
+    signal openInputsDirectoryRequested()
+    signal openArtifactsDirectoryRequested()
+    signal openExportsDirectoryRequested()
 
     function profileIndex() {
         return Math.max(0, ["preview", "balanced", "quality"].indexOf(project.profile || "balanced"))
@@ -65,6 +71,84 @@ Rectangle {
                     status: root.running ? "running"
                         : root.project.status === "failed" ? "error"
                         : root.project.project_id ? "success" : "neutral"
+                }
+            }
+
+            Divider { theme: root.theme; Layout.fillWidth: true }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.margins: 16
+                spacing: 8
+                SectionHeader { theme: root.theme; type: root.type; Layout.fillWidth: true; title: "Files" }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    ToolbarButton {
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Workspace"
+                        compact: true
+                        enabled: !!root.project.project_id
+                        onClicked: root.openProjectDirectoryRequested()
+                    }
+                    ToolbarButton {
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Library"
+                        compact: true
+                        enabled: !!root.project.library_path
+                        onClicked: root.openLibraryDirectoryRequested()
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    ToolbarButton {
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Current run"
+                        compact: true
+                        enabled: !!root.project.run_id
+                        onClicked: root.openRunDirectoryRequested()
+                    }
+                    ToolbarButton {
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Input frames"
+                        compact: true
+                        enabled: !!root.project.run_id
+                        onClicked: root.openInputsDirectoryRequested()
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    ToolbarButton {
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Artifacts"
+                        compact: true
+                        enabled: !!root.project.run_id
+                        onClicked: root.openArtifactsDirectoryRequested()
+                    }
+                    ToolbarButton {
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Exports"
+                        compact: true
+                        enabled: !!root.project.run_id
+                        onClicked: root.openExportsDirectoryRequested()
+                    }
+                }
+                Text {
+                    visible: root.project.active_run_status === "stale"
+                    Layout.fillWidth: true
+                    text: "The saved active run is stale; its run directory is missing."
+                    color: theme.warning
+                    font.family: type.family
+                    font.pixelSize: type.microSize
+                    wrapMode: Text.Wrap
                 }
             }
 

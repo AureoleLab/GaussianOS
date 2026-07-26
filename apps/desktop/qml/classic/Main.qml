@@ -852,7 +852,7 @@ ApplicationWindow {
                         required property var modelData
                         tokens: theme
                         text: modelData.label
-                        primary: backend.preferredUi === modelData.id
+                        primary: backend ? backend.preferredUi === modelData.id : false
                         Layout.fillWidth: true
                         onClicked: backend.setPreferredUi(modelData.id)
                     }
@@ -861,9 +861,11 @@ ApplicationWindow {
             Text {
                 Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
                 wrapMode: Text.Wrap; color: theme.textSecondary
-                text: backend.preferredUi === backend.activeUi
-                    ? "Active shell: " + backend.activeUi
-                    : "Restart GaussianOS to activate " + backend.preferredUi + " UI."
+                text: backend
+                    ? (backend.preferredUi === backend.activeUi
+                        ? "Active shell: " + backend.activeUi
+                        : "Restart GaussianOS to activate " + backend.preferredUi + " UI.")
+                    : ""
             }
             GfButton { tokens: theme; text: "Reset Workspace Layout"; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.fillWidth: true; onClicked: resetLayout() }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
@@ -1122,7 +1124,7 @@ ApplicationWindow {
             Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; color: theme.divider; Layout.leftMargin: 7; Layout.rightMargin: 7 }
             GfButton { tokens: theme; text: current.status === "interrupted" ? "Resume" : "Run"; iconText: "▶"; primary: true; compact: true; Layout.preferredWidth: 86; enabled: !!current.input_path && current.status !== "running"; onClicked: backend.start() }
             GfButton { tokens: theme; text: "Cancel"; compact: true; Layout.preferredWidth: 88; enabled: current.status === "running"; onClicked: backend.cancel() }
-            GfButton { tokens: theme; text: "Export"; iconText: "↑"; compact: true; Layout.preferredWidth: 92; enabled: stageState("export").status === "succeeded"; onClicked: backend.openExportFolder() }
+            GfButton { tokens: theme; text: "Export"; iconText: "↑"; compact: true; Layout.preferredWidth: 92; enabled: stageState("export").status === "succeeded"; onClicked: backend.openExportsDirectory(String(current.project_id || ""), String(current.run_id || "")) }
             Item { Layout.fillWidth: true }
             GfStatusDot { tokens: theme; status: current.status || "idle" }
             Text { text: current.name || "Idle"; color: theme.textSecondary; elide: Text.ElideRight; Layout.maximumWidth: 210; font.pixelSize: theme.typeSmall }

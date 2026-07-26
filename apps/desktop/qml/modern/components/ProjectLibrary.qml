@@ -13,6 +13,7 @@ Rectangle {
     property string sortMode: "Modified"
     property string searchText: ""
     property string selectedProjectId: ""
+    property string selectedLibraryPath: ""
     property var projects: []
     readonly property var visibleProjects: {
         var query = searchText.trim().toLowerCase()
@@ -199,6 +200,8 @@ Rectangle {
                 text: root.width >= 760 ? "Open library folder" : ""
                 iconName: "folder"
                 toolTip: "Open library folder"
+                enabled: root.selectedProjectId.length > 0
+                    && root.selectedLibraryPath.length > 0
                 onClicked: root.openLibraryRequested()
             }
         }
