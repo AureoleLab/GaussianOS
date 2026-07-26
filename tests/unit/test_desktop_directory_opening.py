@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from apps.desktop.directory_opening import ProjectDirectoryService
 from apps.desktop.main import project_view
-from apps.desktop.project_store import Project, ProjectStore
+from apps.desktop.project_store import (
+    Project,
+    ProjectStore,
+    UnsafeProjectWorkspaceError,
+)
 
 
 def _set_active_run(store: ProjectStore, project_id: str, run_id: str) -> None:
@@ -163,3 +169,22 @@ def test_legacy_shared_opening_is_read_only_and_has_no_synthetic_library(
     assert opened == [shared.resolve()]
     assert before == after == [Path("keep.txt")]
     assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_single_legacy_project_is_read_only_without_creating_directories(
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(tmp_path / "state" / "projects")
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    sentinel = legacy / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    store.save(Project("legacy-one", "Legacy", str(legacy)))
+    before = sorted(path.relative_to(legacy) for path in legacy.rglob("*"))
+
+    with pytest.raises(UnsafeProjectWorkspaceError, match="read-only"):
+        store.ensure_writable("legacy-one")
+
+    after = sorted(path.relative_to(legacy) for path in legacy.rglob("*"))
+    assert store.load("legacy-one").workspace_kind == "legacy"
+    assert before == after == [Path("keep.txt")]

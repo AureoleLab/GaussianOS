@@ -341,7 +341,7 @@ class ProjectStore:
 
     def ensure_writable(self, project_or_id: Project | str) -> ProjectPaths:
         project = self.load(project_or_id) if isinstance(project_or_id, str) else project_or_id
-        if project.workspace_kind == "legacy_shared":
+        if project.workspace_kind != "isolated":
             raise UnsafeProjectWorkspaceError(
                 "Legacy/shared workspace is read-only; migrate it before importing or running."
             )
