@@ -10,26 +10,32 @@ AbstractButton {
     property string iconName: "project"
     property bool selected: false
     property string status: ""
+    readonly property bool pointerHovered: rowHover.hovered
+    readonly property bool manageVisible: detail.length > 0 && (pointerHovered || selected)
     signal manageClicked()
 
-    hoverEnabled: true
+    hoverEnabled: false
     implicitHeight: detail.length > 0 ? theme.density.listRowHeight : theme.density.compactRowHeight
     focusPolicy: Qt.StrongFocus
     leftPadding: 10
     rightPadding: 6
     scale: root.down ? theme.motion.pressScale : 1
+    opacity: enabled ? 1 : 0.46
 
     background: Rectangle {
         radius: theme.radiusItem
         color: root.selected ? theme.selected
              : root.down ? theme.controlPressed
-             : root.hovered ? theme.controlHover
+             : root.pointerHovered ? theme.controlHover
              : "transparent"
         border.width: root.visualFocus ? 1 : 0
         border.color: theme.focus
         Behavior on color {
+            enabled: root.pointerHovered || root.selected || root.down
             ColorAnimation {
-                duration: theme.motion.navigationSelectionDuration
+                duration: root.selected
+                    ? theme.motion.navigationSelectionDuration
+                    : theme.motion.hoverDuration
                 easing.type: Easing.BezierSpline
                 easing.bezierCurve: theme.motion.navigationCurve
             }
@@ -41,7 +47,9 @@ AbstractButton {
         AppIcon {
             name: root.iconName
             size: theme.density.iconDefault
-            color: root.selected ? theme.accent : theme.inkSecondary
+            color: root.selected ? theme.accent
+                : root.pointerHovered ? theme.ink
+                : theme.inkSecondary
         }
         ColumnLayout {
             Layout.fillWidth: true
@@ -66,7 +74,8 @@ AbstractButton {
             }
         }
         IconButton {
-            visible: root.detail.length > 0 && root.hovered
+            visible: root.manageVisible
+            opacity: root.manageVisible ? 1 : 0
             theme: root.theme
             type: root.type
             iconName: "manage"
@@ -74,7 +83,19 @@ AbstractButton {
             implicitWidth: theme.density.compactControlHeight
             implicitHeight: theme.density.compactControlHeight
             onClicked: root.manageClicked()
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: theme.motion.hoverDuration
+                    easing.type: Easing.OutCubic
+                }
+            }
         }
+    }
+
+    HoverHandler {
+        id: rowHover
+        enabled: root.enabled
+        cursorShape: Qt.PointingHandCursor
     }
 
     Behavior on scale {

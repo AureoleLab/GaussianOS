@@ -9,6 +9,7 @@ Rectangle {
     required property var type
     property string filterMode: "all"
     property string viewMode: "list"
+    property string pendingViewMode: viewMode
     property string sortMode: "Modified"
     property string searchText: ""
     property string selectedProjectId: ""
@@ -50,6 +51,19 @@ Rectangle {
         if (group === "all") return projects.length
         return projects.filter(function(project) { return project.group === group }).length
     }
+    function animateResults() {
+        resultChangeMotion.restart()
+    }
+    function requestViewMode(mode) {
+        if (mode === viewMode && !viewModeMotion.running)
+            return
+        pendingViewMode = mode
+        viewModeMotion.restart()
+    }
+
+    onFilterModeChanged: animateResults()
+    onSortModeChanged: animateResults()
+    onSearchTextChanged: searchMotionTimer.restart()
 
     ColumnLayout {
         anchors.fill: parent
@@ -104,9 +118,13 @@ Rectangle {
                 onTextChanged: root.searchText = text
                 background: Rectangle {
                     radius: theme.radiusControl
-                    color: theme.control
+                    color: parent.enabled && parent.hovered && !parent.activeFocus
+                        ? theme.controlHover : theme.control
                     border.width: parent.activeFocus ? 2 : 1
                     border.color: parent.activeFocus ? theme.focus : theme.line
+                    Behavior on color {
+                        ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+                    }
                     AppIcon {
                         anchors.left: parent.left
                         anchors.leftMargin: 11
@@ -140,7 +158,7 @@ Rectangle {
                 toolTip: "List view"
                 toggle: true
                 selected: root.viewMode === "list"
-                onClicked: root.viewMode = "list"
+                onClicked: root.requestViewMode("list")
             }
             IconButton {
                 objectName: "gridViewToggle"
@@ -149,7 +167,7 @@ Rectangle {
                 toolTip: "Grid view"
                 toggle: true
                 selected: root.viewMode === "grid"
-                onClicked: root.viewMode = "grid"
+                onClicked: root.requestViewMode("grid")
             }
         }
 
@@ -188,6 +206,7 @@ Rectangle {
         Divider { theme: root.theme; Layout.fillWidth: true }
 
         StackLayout {
+            id: resultsHost
             Layout.fillWidth: true
             Layout.fillHeight: true
             currentIndex: root.viewMode === "list" ? 0 : 1
@@ -242,12 +261,29 @@ Rectangle {
                                 id: projectRow
                                 required property var modelData
                                 required property int index
+                                readonly property bool rowSelected: root.selectedProjectId === modelData.id
+                                readonly property bool rowHovered: rowHover.hovered
                                 width: ListView.view.width
                                 height: theme.density.listRowHeight
-                                color: root.selectedProjectId === modelData.id
+                                activeFocusOnTab: true
+                                scale: rowTap.pressed ? theme.motion.pressScale : 1
+                                color: rowSelected
                                     ? theme.selected
-                                    : rowMouse.containsMouse ? theme.controlHover : "transparent"
+                                    : rowTap.pressed ? theme.controlPressed
+                                    : rowHovered ? theme.controlHover : "transparent"
                                 radius: theme.radiusItem
+                                border.width: activeFocus ? 1 : 0
+                                border.color: theme.focus
+                                Accessible.name: modelData.name
+                                Accessible.role: Accessible.ListItem
+                                Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Return
+                                            || event.key === Qt.Key_Enter
+                                            || event.key === Qt.Key_Space) {
+                                        root.choose(modelData)
+                                        event.accepted = true
+                                    }
+                                }
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: theme.density.sidePadding
@@ -256,7 +292,8 @@ Rectangle {
                                     AppIcon {
                                         name: modelData.group === "archived" ? "archive" : "project"
                                         size: theme.density.iconDefault
-                                        color: root.selectedProjectId === modelData.id ? theme.ink : theme.inkSecondary
+                                        color: projectRow.rowSelected || projectRow.rowHovered
+                                            ? theme.ink : theme.inkSecondary
                                     }
                                     Text {
                                         Layout.fillWidth: true
@@ -264,7 +301,7 @@ Rectangle {
                                         color: theme.ink
                                         font.family: type.family
                                         font.pixelSize: type.listPrimarySize
-                                        font.weight: root.selectedProjectId === modelData.id ? type.semibold : type.medium
+                                        font.weight: projectRow.rowSelected ? type.semibold : type.medium
                                         elide: Text.ElideRight
                                     }
                                     Item {
@@ -294,19 +331,29 @@ Rectangle {
                                         IconButton { visible: modelData.group === "trash"; theme: root.theme; type: root.type; muted: true; iconName: "delete"; toolTip: "Delete forever"; danger: true; onClicked: root.purgeRequested(modelData) }
                                     }
                                 }
-                                MouseArea {
-                                    id: rowMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
+                                HoverHandler {
+                                    id: rowHover
+                                    cursorShape: Qt.PointingHandCursor
+                                }
+                                TapHandler {
+                                    id: rowTap
                                     acceptedButtons: Qt.LeftButton
-                                    propagateComposedEvents: true
-                                    onClicked: function(mouse) {
+                                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                                    onTapped: {
+                                        projectRow.forceActiveFocus(Qt.MouseFocusReason)
                                         root.choose(modelData)
-                                        mouse.accepted = false
                                     }
                                 }
                                 Behavior on color {
+                                    enabled: projectRow.rowHovered || projectRow.rowSelected || rowTap.pressed
                                     ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+                                }
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: theme.motion.pressDuration
+                                        easing.type: Easing.BezierSpline
+                                        easing.bezierCurve: theme.motion.emphasizedCurve
+                                    }
                                 }
                                 Behavior on height {
                                     NumberAnimation { duration: theme.motion.densityDuration; easing.type: Easing.OutCubic }
@@ -331,11 +378,32 @@ Rectangle {
                     NumberAnimation { duration: theme.motion.densityDuration; easing.type: Easing.OutCubic }
                 }
                 delegate: Panel {
+                    id: projectCard
                     required property var modelData
+                    readonly property bool cardSelected: root.selectedProjectId === modelData.id
+                    readonly property bool cardHovered: cardHover.hovered
                     width: projectGrid.cellWidth - theme.density.itemGap
                     height: projectGrid.cellHeight - theme.density.itemGap
                     theme: root.theme
-                    color: root.selectedProjectId === modelData.id ? theme.selected : theme.surface
+                    activeFocusOnTab: true
+                    scale: cardTap.pressed ? theme.motion.pressScale : 1
+                    color: cardSelected ? theme.selected
+                        : cardTap.pressed ? theme.controlPressed
+                        : cardHovered ? theme.controlHover
+                        : theme.surface
+                    border.width: activeFocus ? 2 : 1
+                    border.color: activeFocus ? theme.focus
+                        : cardSelected ? theme.lineStrong : theme.lineSubtle
+                    Accessible.name: modelData.name
+                    Accessible.role: Accessible.ListItem
+                    Keys.onPressed: function(event) {
+                        if (event.key === Qt.Key_Return
+                            || event.key === Qt.Key_Enter
+                            || event.key === Qt.Key_Space) {
+                            root.choose(modelData)
+                            event.accepted = true
+                        }
+                    }
                     ColumnLayout {
                         anchors.fill: parent
                         anchors.margins: theme.density.panelPadding
@@ -346,7 +414,7 @@ Rectangle {
                             Item { Layout.fillWidth: true }
                             StatusBadge { theme: root.theme; type: root.type; text: modelData.status.toUpperCase(); status: modelData.group === "active" ? "success" : "neutral" }
                         }
-                        Text { Layout.fillWidth: true; text: modelData.name; color: theme.ink; font.family: type.family; font.pixelSize: type.listPrimarySize; font.weight: root.selectedProjectId === modelData.id ? type.semibold : type.medium; elide: Text.ElideRight }
+                        Text { Layout.fillWidth: true; text: modelData.name; color: theme.ink; font.family: type.family; font.pixelSize: type.listPrimarySize; font.weight: projectCard.cardSelected ? type.semibold : type.medium; elide: Text.ElideRight }
                         Text { Layout.fillWidth: true; text: modelData.location; color: theme.inkSecondary; font.family: type.family; font.pixelSize: type.metadataSize; elide: Text.ElideMiddle }
                         Item { Layout.fillHeight: true }
                         RowLayout {
@@ -356,7 +424,32 @@ Rectangle {
                             IconButton { theme: root.theme; type: root.type; muted: true; iconName: "manage"; toolTip: "Project actions"; onClicked: root.renameRequested(modelData) }
                         }
                     }
-                    TapHandler { onTapped: root.choose(modelData) }
+                    HoverHandler {
+                        id: cardHover
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    TapHandler {
+                        id: cardTap
+                        acceptedButtons: Qt.LeftButton
+                        gesturePolicy: TapHandler.ReleaseWithinBounds
+                        onTapped: {
+                            projectCard.forceActiveFocus(Qt.MouseFocusReason)
+                            root.choose(modelData)
+                        }
+                    }
+                    Behavior on color {
+                        ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on border.color {
+                        ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on scale {
+                        NumberAnimation {
+                            duration: theme.motion.pressDuration
+                            easing.type: Easing.BezierSpline
+                            easing.bezierCurve: theme.motion.emphasizedCurve
+                        }
+                    }
                 }
             }
         }
@@ -371,6 +464,91 @@ Rectangle {
             font.pixelSize: type.bodySize
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
+        }
+    }
+
+    Timer {
+        id: searchMotionTimer
+        interval: 45
+        onTriggered: root.animateResults()
+    }
+
+    SequentialAnimation {
+        id: viewModeMotion
+        alwaysRunToEnd: false
+        ParallelAnimation {
+            NumberAnimation {
+                target: resultsHost
+                property: "opacity"
+                to: 0.15
+                duration: theme.motion.resultDuration * 0.4
+                easing.type: Easing.InCubic
+            }
+            NumberAnimation {
+                target: resultsHost
+                property: "scale"
+                to: theme.motion.stateScale
+                duration: theme.motion.resultDuration * 0.4
+                easing.type: Easing.InCubic
+            }
+        }
+        ScriptAction { script: root.viewMode = root.pendingViewMode }
+        ParallelAnimation {
+            NumberAnimation {
+                target: resultsHost
+                property: "opacity"
+                to: 1
+                duration: theme.motion.resultDuration * 0.6
+                easing.type: Easing.BezierSpline
+                easing.bezierCurve: theme.motion.standardCurve
+            }
+            NumberAnimation {
+                target: resultsHost
+                property: "scale"
+                to: 1
+                duration: theme.motion.resultDuration * 0.6
+                easing.type: Easing.BezierSpline
+                easing.bezierCurve: theme.motion.standardCurve
+            }
+        }
+    }
+
+    SequentialAnimation {
+        id: resultChangeMotion
+        alwaysRunToEnd: false
+        ParallelAnimation {
+            NumberAnimation {
+                target: resultsHost
+                property: "opacity"
+                to: 0.72
+                duration: theme.motion.resultDuration * 0.35
+                easing.type: Easing.InCubic
+            }
+            NumberAnimation {
+                target: resultsHost
+                property: "scale"
+                to: theme.motion.stateScale
+                duration: theme.motion.resultDuration * 0.35
+                easing.type: Easing.InCubic
+            }
+        }
+        ParallelAnimation {
+            NumberAnimation {
+                target: resultsHost
+                property: "opacity"
+                to: 1
+                duration: theme.motion.resultDuration * 0.65
+                easing.type: Easing.BezierSpline
+                easing.bezierCurve: theme.motion.standardCurve
+            }
+            NumberAnimation {
+                target: resultsHost
+                property: "scale"
+                to: 1
+                duration: theme.motion.resultDuration * 0.65
+                easing.type: Easing.BezierSpline
+                easing.bezierCurve: theme.motion.standardCurve
+            }
         }
     }
 }

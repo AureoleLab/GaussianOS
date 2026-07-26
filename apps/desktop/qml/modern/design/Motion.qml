@@ -5,19 +5,23 @@ QtObject {
     property bool reducedMotion: false
     property bool densityChanging: false
 
-    readonly property int pressDuration: reducedMotion ? 1 : 105
-    readonly property int hoverDuration: reducedMotion ? 1 : 130
-    readonly property int sectionDuration: reducedMotion ? 1 : 210
-    readonly property int dialogDuration: reducedMotion ? 1 : 250
-    readonly property int toastDuration: reducedMotion ? 1 : 220
-    readonly property int paneDuration: reducedMotion ? 1 : 290
-    readonly property int stateDuration: reducedMotion ? 1 : 260
-    readonly property int menuDuration: reducedMotion ? 1 : 190
-    readonly property int densityDuration: reducedMotion ? 1 : 160
+    readonly property int reducedDuration: 140
+    readonly property int pressDuration: reducedMotion ? 120 : 105
+    readonly property int hoverDuration: reducedMotion ? reducedDuration : 140
+    readonly property int sectionDuration: reducedMotion ? reducedDuration : 210
+    readonly property int dialogDuration: reducedMotion ? reducedDuration : 250
+    readonly property int toastDuration: reducedMotion ? reducedDuration : 220
+    readonly property int paneDuration: reducedMotion ? reducedDuration : 290
+    readonly property int stateDuration: reducedMotion ? reducedDuration : 260
+    readonly property int menuDuration: reducedMotion ? reducedDuration : 190
+    readonly property int densityDuration: reducedMotion ? reducedDuration : 160
     readonly property int pageTransitionDuration: reducedMotion ? 150 : 290
     readonly property int inspectorTransitionDuration: reducedMotion ? 150 : 240
-    readonly property int splitSnapDuration: reducedMotion ? 1 : 140
+    readonly property int splitSnapDuration: reducedMotion ? reducedDuration : 140
     readonly property int navigationSelectionDuration: reducedMotion ? 120 : 180
+    readonly property int resultDuration: reducedMotion ? reducedDuration : 220
+    readonly property int viewerDuration: reducedMotion ? reducedDuration : 240
+    readonly property int timelineScrollDuration: reducedMotion ? 120 : 145
     readonly property int adaptivePaneDuration: densityChanging ? densityDuration : paneDuration
 
     readonly property real pressScale: reducedMotion ? 1.0 : 0.975

@@ -15,6 +15,27 @@ Item {
     implicitWidth: orientation === Qt.Horizontal ? theme.density.splitHandleExtent : 1
     implicitHeight: orientation === Qt.Vertical ? theme.density.splitHandleExtent : 1
     enabled: interactive
+    activeFocusOnTab: interactive
+    opacity: enabled ? 1 : 0.35
+    scale: drag.active ? theme.motion.pressScale : 1
+
+    Keys.onPressed: function(event) {
+        var step = event.modifiers & Qt.ShiftModifier ? 24 : 8
+        var delta = 0
+        if (root.orientation === Qt.Horizontal) {
+            if (event.key === Qt.Key_Left) delta = -step
+            if (event.key === Qt.Key_Right) delta = step
+        } else {
+            if (event.key === Qt.Key_Up) delta = -step
+            if (event.key === Qt.Key_Down) delta = step
+        }
+        if (delta !== 0) {
+            root.dragStarted()
+            root.dragMoved(delta)
+            root.dragFinished()
+            event.accepted = true
+        }
+    }
 
     Rectangle {
         anchors.centerIn: parent
@@ -24,6 +45,15 @@ Item {
         Behavior on color {
             ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
         }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: 1
+        color: "transparent"
+        border.width: root.activeFocus ? 1 : 0
+        border.color: theme.focus
+        radius: theme.radiusControl
     }
 
     HoverHandler {
@@ -57,5 +87,9 @@ Item {
         enabled: root.interactive
         acceptedButtons: Qt.LeftButton
         onDoubleTapped: root.resetRequested()
+    }
+
+    Behavior on scale {
+        NumberAnimation { duration: theme.motion.pressDuration; easing.type: Easing.OutCubic }
     }
 }

@@ -61,6 +61,23 @@ Rectangle {
             notice = frame.reason || "No reconstructed camera for this frame"
         }
     }
+    function timelineMaximumX() {
+        return Math.max(0, timelineList.contentWidth - timelineList.width)
+    }
+    function scrollTimelineBy(delta, smooth) {
+        var currentTarget = timelineWheelMotion.running
+            ? timelineWheelMotion.to : timelineList.contentX
+        var destination = Math.max(0, Math.min(timelineMaximumX(), currentTarget + delta))
+        if (!smooth) {
+            timelineWheelMotion.stop()
+            timelineList.contentX = destination
+            return
+        }
+        timelineWheelMotion.stop()
+        timelineWheelMotion.from = timelineList.contentX
+        timelineWheelMotion.to = destination
+        timelineWheelMotion.start()
+    }
     function runAcceptance(cameraTimeline) {
         if (!viewerActive) {
             acceptanceResult("Modern viewer is not active")
@@ -176,16 +193,42 @@ Rectangle {
                 id: viewer
                 objectName: "gaussianViewer"
                 anchors.fill: parent
-                visible: root.viewerActive
+                visible: opacity > 0.01
+                enabled: root.viewerActive
+                opacity: root.viewerActive ? 1 : 0
                 url: root.viewerUrl
                 onTitleChanged: root.viewerTitleChanged(title)
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: theme.motion.viewerDuration
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: theme.motion.standardCurve
+                    }
+                }
             }
 
             ColumnLayout {
                 anchors.centerIn: parent
                 width: Math.min(440, parent.width - 48)
                 spacing: 12
-                visible: !root.viewerActive
+                visible: opacity > 0.01
+                enabled: !root.viewerActive
+                opacity: root.viewerActive ? 0 : 1
+                y: root.viewerActive ? theme.motion.smallTravel : 0
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: theme.motion.viewerDuration
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: theme.motion.standardCurve
+                    }
+                }
+                Behavior on y {
+                    NumberAnimation {
+                        duration: theme.motion.viewerDuration
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: theme.motion.standardCurve
+                    }
+                }
                 Rectangle {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.preferredWidth: 58
@@ -245,13 +288,31 @@ Rectangle {
             }
 
             Rectangle {
-                visible: root.viewerActive && root.timeline.length > 0
+                id: timelinePanel
+                readonly property bool timelineAvailable: root.viewerActive && root.timeline.length > 0
+                visible: opacity > 0.01
+                enabled: timelineAvailable
+                opacity: timelineAvailable ? 0.96 : 0
+                y: timelineAvailable ? 0 : theme.motion.smallTravel
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: Math.min(112, parent.height * 0.28)
                 color: theme.chrome
-                opacity: 0.96
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: theme.motion.viewerDuration
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: theme.motion.standardCurve
+                    }
+                }
+                Behavior on y {
+                    NumberAnimation {
+                        duration: theme.motion.viewerDuration
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: theme.motion.standardCurve
+                    }
+                }
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 8
@@ -275,44 +336,139 @@ Rectangle {
                     }
                     ListView {
                         id: timelineList
+                        objectName: "cameraTimeline"
+                        readonly property bool overflowing: contentWidth > width + 1
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         orientation: ListView.Horizontal
                         spacing: 6
                         clip: true
                         model: root.timeline
-                        delegate: Rectangle {
+                        boundsBehavior: Flickable.StopAtBounds
+                        flickDeceleration: 5000
+                        pixelAligned: false
+                        delegate: AbstractButton {
+                            id: frameButton
                             required property var modelData
                             required property int index
                             width: 92
-                            height: ListView.view.height
-                            radius: theme.radiusItem
-                            color: root.playhead === index ? theme.selected : theme.surface
-                            border.width: root.playhead === index ? 1 : 0
-                            border.color: theme.accent
-                            Image {
-                                anchors.fill: parent
-                                anchors.margins: 3
-                                source: root.fileUrl(modelData.thumbnail_path || modelData.extracted_image_path)
-                                fillMode: Image.PreserveAspectCrop
-                                asynchronous: true
-                            }
-                            Rectangle {
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: 18
-                                color: theme.chrome
-                                opacity: 0.88
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "#" + (modelData.frame_index === undefined ? index : modelData.frame_index)
-                                    color: theme.ink
-                                    font.family: type.monoFamily
-                                    font.pixelSize: type.microSize
+                            height: Math.max(
+                                36,
+                                ListView.view.height
+                                    - (timelineList.overflowing ? timelineScrollBar.height + 4 : 0)
+                            )
+                            hoverEnabled: true
+                            focusPolicy: Qt.StrongFocus
+                            scale: down ? theme.motion.pressScale : 1
+                            Accessible.name: "Camera frame " + (index + 1)
+                            Accessible.role: Accessible.Button
+                            onClicked: root.activateFrame(index)
+                            background: Rectangle {
+                                radius: theme.radiusItem
+                                color: root.playhead === index ? theme.selected
+                                    : frameButton.down ? theme.controlPressed
+                                    : frameButton.hovered ? theme.controlHover
+                                    : theme.surface
+                                border.width: frameButton.visualFocus || root.playhead === index ? 1 : 0
+                                border.color: frameButton.visualFocus ? theme.focus : theme.accent
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: theme.motion.hoverDuration
+                                        easing.type: Easing.OutCubic
+                                    }
                                 }
                             }
-                            TapHandler { onTapped: root.activateFrame(index) }
+                            contentItem: Item {
+                                clip: true
+                                Image {
+                                    anchors.fill: parent
+                                    anchors.margins: 3
+                                    source: root.fileUrl(modelData.thumbnail_path || modelData.extracted_image_path)
+                                    fillMode: Image.PreserveAspectCrop
+                                    asynchronous: true
+                                }
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 18
+                                    color: theme.chrome
+                                    opacity: 0.88
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "#" + (modelData.frame_index === undefined ? index : modelData.frame_index)
+                                        color: theme.ink
+                                        font.family: type.monoFamily
+                                        font.pixelSize: type.microSize
+                                    }
+                                }
+                            }
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: theme.motion.pressDuration
+                                    easing.type: Easing.BezierSpline
+                                    easing.bezierCurve: theme.motion.emphasizedCurve
+                                }
+                            }
+                        }
+
+                        HoverHandler {
+                            id: timelineHover
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        }
+                        WheelHandler {
+                            id: timelineWheel
+                            objectName: "cameraTimelineWheelHandler"
+                            target: null
+                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                            onWheel: function(event) {
+                                var pixel = event.pixelDelta.x !== 0
+                                    ? event.pixelDelta.x : event.pixelDelta.y
+                                var angle = event.angleDelta.x !== 0
+                                    ? event.angleDelta.x : event.angleDelta.y
+                                if (pixel !== 0)
+                                    root.scrollTimelineBy(-pixel, false)
+                                else if (angle !== 0)
+                                    root.scrollTimelineBy(-angle / 120 * 72, true)
+                                event.accepted = true
+                            }
+                        }
+
+                        ScrollBar.horizontal: ScrollBar {
+                            id: timelineScrollBar
+                            objectName: "cameraTimelineScrollBar"
+                            height: 10
+                            policy: ScrollBar.AlwaysOn
+                            interactive: true
+                            visible: timelineList.overflowing
+                            opacity: pressed || hovered || timelineHover.hovered || timelineWheel.active
+                                ? 1 : 0.28
+                            background: Rectangle {
+                                radius: height / 2
+                                color: theme.surfaceSunken
+                                border.width: parent.visualFocus ? 1 : 0
+                                border.color: theme.focus
+                            }
+                            contentItem: Rectangle {
+                                objectName: "cameraTimelineScrollThumb"
+                                implicitHeight: 6
+                                radius: height / 2
+                                color: timelineScrollBar.pressed
+                                    ? theme.ink : timelineScrollBar.hovered
+                                        ? theme.inkSecondary : theme.inkTertiary
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: theme.motion.hoverDuration
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                            }
+                            Behavior on opacity {
+                                NumberAnimation {
+                                    duration: theme.motion.hoverDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
                         }
                     }
                 }
@@ -421,11 +577,36 @@ Rectangle {
                         font.pixelSize: type.microSize
                     }
                 }
-                Divider { visible: root.logOpen; theme: root.theme; Layout.fillWidth: true }
+                Divider {
+                    visible: opacity > 0.01
+                    opacity: root.logOpen ? 1 : 0
+                    theme: root.theme
+                    Layout.fillWidth: true
+                    Behavior on opacity {
+                        NumberAnimation { duration: theme.motion.sectionDuration; easing.type: Easing.OutCubic }
+                    }
+                }
                 ScrollView {
-                    visible: root.logOpen
+                    visible: opacity > 0.01
+                    enabled: root.logOpen
+                    opacity: root.logOpen ? 1 : 0
+                    y: root.logOpen ? 0 : -theme.motion.smallTravel
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: theme.motion.sectionDuration
+                            easing.type: Easing.BezierSpline
+                            easing.bezierCurve: theme.motion.standardCurve
+                        }
+                    }
+                    Behavior on y {
+                        NumberAnimation {
+                            duration: theme.motion.sectionDuration
+                            easing.type: Easing.BezierSpline
+                            easing.bezierCurve: theme.motion.standardCurve
+                        }
+                    }
                     TextArea {
                         text: root.logText
                         readOnly: true
@@ -445,5 +626,14 @@ Rectangle {
         id: logSnapTimer
         interval: theme.motion.splitSnapDuration + 20
         onTriggered: root.logSnapping = false
+    }
+
+    NumberAnimation {
+        id: timelineWheelMotion
+        target: timelineList
+        property: "contentX"
+        duration: theme.motion.timelineScrollDuration
+        easing.type: Easing.BezierSpline
+        easing.bezierCurve: theme.motion.standardCurve
     }
 }

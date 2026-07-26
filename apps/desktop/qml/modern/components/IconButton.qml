@@ -20,6 +20,7 @@ AbstractButton {
     Accessible.name: toolTip
     Accessible.role: Accessible.Button
     scale: root.down ? theme.motion.pressScale : 1
+    opacity: enabled ? 1 : 0.46
 
     background: Rectangle {
         radius: theme.radiusControl

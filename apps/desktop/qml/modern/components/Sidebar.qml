@@ -36,9 +36,13 @@ Rectangle {
             leftPadding: 32
             background: Rectangle {
                 radius: theme.radiusControl
-                color: root.theme.surfaceSunken
+                color: parent.enabled && parent.hovered && !parent.activeFocus
+                    ? theme.controlHover : root.theme.surfaceSunken
                 border.width: parent.activeFocus ? 2 : 0
                 border.color: theme.focus
+                Behavior on color {
+                    ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+                }
                 AppIcon {
                     anchors.left: parent.left
                     anchors.leftMargin: 10

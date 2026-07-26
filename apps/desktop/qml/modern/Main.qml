@@ -1139,62 +1139,69 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true
             spacing: 10
-            UI.Panel {
+            UI.ChoiceCard {
                 theme: window.themeTokens
+                type: window.typeTokens
                 Layout.fillWidth: true
                 implicitHeight: 132
-                raised: true
+                selected: window.pendingVideoMode === "easy"
+                enabled: window.importDraft.status === "ready"
+                onClicked: {
+                    window.pendingVideoMode = "easy"
+                    backend.configureVideoImport(
+                        "auto", 1, 1.0, "seconds", 0,
+                        Math.max(0, Number(importDialog.sampling.source_total_frames || 1) - 1),
+                        "balanced"
+                    )
+                }
                 ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 14
+                    Layout.fillWidth: true
                     spacing: 6
                     UI.AppIcon { name: "play"; size: theme.density.iconDefault; color: theme.inkSecondary }
                     Text { text: "Easy mode"; color: theme.ink; font.family: type.family; font.pixelSize: type.headingSize; font.weight: type.semibold }
                     Text { Layout.fillWidth: true; text: "Automatic sampling and recommended reconstruction profile."; color: theme.inkSecondary; font.family: type.family; font.pixelSize: type.microSize; lineHeight: type.bodyLine; wrapMode: Text.Wrap }
                 }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    enabled: window.importDraft.status === "ready"
-                    onClicked: {
-                        window.pendingVideoMode = "easy"
-                        backend.configureVideoImport(
-                            "auto", 1, 1.0, "seconds", 0,
-                            Math.max(0, Number(importDialog.sampling.source_total_frames || 1) - 1),
-                            "balanced"
-                        )
-                    }
-                }
             }
-            UI.Panel {
+            UI.ChoiceCard {
                 theme: window.themeTokens
+                type: window.typeTokens
                 Layout.fillWidth: true
                 implicitHeight: 132
-                color: theme.accentSoft
-                border.color: theme.accent
+                selected: window.pendingVideoMode === "pro"
+                enabled: window.importDraft.status === "ready"
+                onClicked: window.pendingVideoMode = "pro"
                 ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 14
+                    Layout.fillWidth: true
                     spacing: 6
                     UI.AppIcon { name: "sliders"; size: theme.density.iconDefault; color: theme.accent }
                     Text { text: "Pro mode"; color: theme.ink; font.family: type.family; font.pixelSize: type.headingSize; font.weight: type.semibold }
                     Text { Layout.fillWidth: true; text: "Trim, sampling, preview and analysis controls before generation."; color: theme.inkSecondary; font.family: type.family; font.pixelSize: type.microSize; lineHeight: type.bodyLine; wrapMode: Text.Wrap }
                 }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    enabled: window.importDraft.status === "ready"
-                    onClicked: window.pendingVideoMode = "pro"
-                }
             }
         }
 
         GridLayout {
-            visible: window.pendingVideoMode === "pro"
+            visible: opacity > 0.01
+            opacity: window.pendingVideoMode === "pro" ? 1 : 0
+            scale: window.pendingVideoMode === "pro" ? 1 : theme.motion.stateScale
             Layout.fillWidth: true
             columns: 2
             rowSpacing: 8
             columnSpacing: 8
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: theme.motion.sectionDuration
+                    easing.type: Easing.BezierSpline
+                    easing.bezierCurve: theme.motion.standardCurve
+                }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: theme.motion.sectionDuration
+                    easing.type: Easing.BezierSpline
+                    easing.bezierCurve: theme.motion.standardCurve
+                }
+            }
             UI.ComboField {
                 id: importSamplingMode
                 theme: window.themeTokens; type: window.typeTokens

@@ -11,6 +11,9 @@ CheckBox {
     font.family: type.family
     font.pixelSize: type.labelSize
     palette.text: theme.ink
+    hoverEnabled: true
+    focusPolicy: Qt.StrongFocus
+    opacity: enabled ? 1 : 0.46
 
     indicator: Rectangle {
         implicitWidth: 20
@@ -18,7 +21,10 @@ CheckBox {
         x: 0
         y: Math.round((root.height - height) / 2)
         radius: theme.radiusControl
-        color: root.checked ? theme.accent : root.down ? theme.controlPressed : theme.control
+        color: root.checked ? theme.accent
+            : root.down ? theme.controlPressed
+            : root.hovered ? theme.controlHover
+            : theme.control
         border.width: root.activeFocus ? 2 : 1
         border.color: root.activeFocus ? theme.focus : root.checked ? theme.accent : theme.lineStrong
         scale: root.down ? theme.motion.pressScale : 1

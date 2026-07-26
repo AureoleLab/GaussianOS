@@ -13,12 +13,22 @@ ComboBox {
     font.family: type.family
     font.pixelSize: type.labelSize
     palette.text: theme.ink
+    hoverEnabled: true
+    focusPolicy: Qt.StrongFocus
+    scale: root.down ? theme.motion.pressScale : 1
+    opacity: enabled ? 1 : 0.46
 
     background: Rectangle {
         radius: theme.radiusControl
         color: root.down ? theme.controlPressed : root.hovered ? theme.controlHover : theme.control
         border.width: root.activeFocus ? 2 : 1
         border.color: root.activeFocus ? theme.focus : theme.line
+        Behavior on color {
+            ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+        }
+        Behavior on border.color {
+            ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+        }
     }
     contentItem: Text {
         leftPadding: 0
@@ -31,9 +41,14 @@ ComboBox {
     indicator: AppIcon {
         name: "chevron-down"
         size: theme.density.iconMicro
-        color: theme.inkSecondary
+        color: root.enabled
+            ? root.hovered || root.down ? theme.ink : theme.inkSecondary
+            : theme.inkDisabled
         x: root.width - width - 10
         y: Math.round((root.height - height) / 2)
+        Behavior on color {
+            ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+        }
     }
     popup: Popup {
         id: popupMenu
@@ -97,17 +112,37 @@ ComboBox {
         required property var model
         width: root.width - 8
         height: 32
-        highlighted: root.highlightedIndex === index
+        hoverEnabled: true
+        focusPolicy: Qt.StrongFocus
+        highlighted: hovered || root.highlightedIndex === index
+        scale: down ? theme.motion.pressScale : 1
+        opacity: enabled ? 1 : 0.46
         contentItem: Text {
             text: model[root.textRole] || modelData
-            color: theme.ink
+            color: delegateRoot.enabled ? theme.ink : theme.inkDisabled
             font.family: type.family
             font.pixelSize: type.labelSize
             verticalAlignment: Text.AlignVCenter
         }
         background: Rectangle {
             radius: theme.radiusItem
-            color: delegateRoot.highlighted ? theme.selected : "transparent"
+            color: delegateRoot.down ? theme.controlPressed
+                : delegateRoot.highlighted ? theme.selected : "transparent"
+            border.width: delegateRoot.visualFocus ? 1 : 0
+            border.color: theme.focus
+            Behavior on color {
+                ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
+            }
+        }
+        Behavior on scale {
+            NumberAnimation { duration: theme.motion.pressDuration; easing.type: Easing.OutCubic }
+        }
+    }
+    Behavior on scale {
+        NumberAnimation {
+            duration: theme.motion.pressDuration
+            easing.type: Easing.BezierSpline
+            easing.bezierCurve: theme.motion.emphasizedCurve
         }
     }
     Behavior on implicitHeight {

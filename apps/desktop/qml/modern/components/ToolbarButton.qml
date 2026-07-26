@@ -27,6 +27,7 @@ AbstractButton {
     ToolTip.text: toolTip
     ToolTip.delay: 500
     scale: root.down ? theme.motion.pressScale : 1
+    opacity: enabled ? 1 : 0.46
 
     background: Rectangle {
         radius: theme.radiusControl
@@ -62,6 +63,7 @@ AbstractButton {
                      : root.primary ? theme.inkOnAccent
                      : root.danger ? theme.inkSecondary
                      : root.selected ? theme.accent
+                     : root.hovered || root.down ? theme.ink
                      : theme.inkSecondary
             }
             Text {
