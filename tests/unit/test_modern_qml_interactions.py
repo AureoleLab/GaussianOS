@@ -101,6 +101,16 @@ def test_timeline_frames_keep_selection_focus_and_press_feedback() -> None:
     assert "focusPolicy: Qt.StrongFocus" in viewer
     assert "scale: down ? theme.motion.pressScale : 1" in viewer
     assert "root.playhead === index ? theme.selected" in viewer
+    assert 'frame.selection_status === "selected"' in viewer
+    assert 'frame.status === "selected"' in viewer
+    assert "readonly property int keyframeCount" in viewer
+    assert "frameButton.keyframe ? theme.accentSoft" in viewer
+    assert 'text: "KEY"' in viewer
+    assert 'text: root.keyframeCount + " keyframes"' in viewer
+    assert "modelData.frame_index" not in viewer
+    assert "frame.source_frame_index" in viewer
+    assert "frame.index" in viewer
+    assert 'text: "#" + frameButton.sourceFrame' in viewer
     assert "onClicked: root.activateFrame(index)" in viewer
     assert "timelineList.positionViewAtIndex(index, ListView.Contain)" in viewer
 
@@ -588,3 +598,98 @@ window.close()
         )
     )
     assert "timeline-90-scrollable" in output
+
+
+def test_timeline_keyframes_use_selection_semantics_and_source_frame_numbers() -> None:
+    script = r'''
+from PySide6.QtCore import QByteArray, QObject, QUrl
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQuick import QQuickItem
+from PySide6.QtTest import QTest
+from PySide6.QtWebEngineQuick import QtWebEngineQuick
+
+QtWebEngineQuick.initialize()
+app = QGuiApplication([])
+engine = QQmlEngine()
+qml = r"""
+import QtQuick
+import QtQuick.Controls
+import "__DESIGN__" as Design
+import "__COMPONENTS__" as UI
+ApplicationWindow {
+    width: 700
+    height: 500
+    visible: true
+    Design.Motion { id: motion }
+    Design.Density { id: density; mode: "standard" }
+    Design.Theme { id: theme; motion: motion; density: density }
+    Design.Typography { id: typography; densityMode: density.mode }
+    UI.ViewerPane {
+        id: pane
+        objectName: "pane"
+        anchors.fill: parent
+        theme: theme
+        type: typography
+        viewerUrl: "data:text/html,<html></html>"
+        timeline: [
+            {
+                "source_frame_index": 17,
+                "selection_status": "selected",
+                "registration_status": "unregistered"
+            },
+            {
+                "index": 42,
+                "status": "rejected",
+                "registration_status": "not_applicable"
+            },
+            {
+                "index": 99,
+                "status": "selected",
+                "registration_status": "unregistered"
+            }
+        ]
+    }
+}
+"""
+component = QQmlComponent(engine)
+component.setData(
+    QByteArray(qml.encode()),
+    QUrl("file:///gaussianos/timeline_keyframe_smoke.qml"),
+)
+if component.status() != QQmlComponent.Ready:
+    raise RuntimeError("\n".join(error.toString() for error in component.errors()))
+window = component.create()
+app.processEvents()
+QTest.qWait(400)
+pane = window.findChild(QObject, "pane")
+timeline = window.findChild(QQuickItem, "cameraTimeline")
+
+def visual_find(name):
+    pending = [timeline]
+    while pending:
+        item = pending.pop()
+        if item.objectName() == name:
+            return item
+        pending.extend(item.childItems())
+    return None
+
+source_keyframe = visual_find("cameraTimelineFrame-17")
+ordinary_frame = visual_find("cameraTimelineFrame-42")
+status_keyframe = visual_find("cameraTimelineFrame-99")
+assert pane.property("keyframeCount") == 2
+assert source_keyframe is not None and source_keyframe.property("keyframe") is True
+assert source_keyframe.property("sourceFrame") == 17
+assert ordinary_frame is not None and ordinary_frame.property("keyframe") is False
+assert ordinary_frame.property("sourceFrame") == 42
+assert status_keyframe is not None and status_keyframe.property("keyframe") is True
+assert status_keyframe.property("sourceFrame") == 99
+print("timeline-keyframes-source-indexed")
+window.close()
+'''
+    output = run_qml_probe(
+        script.replace("__DESIGN__", (MODERN / "design").as_uri()).replace(
+            "__COMPONENTS__", COMPONENTS.as_uri()
+        )
+    )
+    assert "timeline-keyframes-source-indexed" in output

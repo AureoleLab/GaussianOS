@@ -22,6 +22,14 @@ Rectangle {
     property bool logSnapping: false
     property int playhead: -1
     readonly property bool viewerActive: viewerUrl !== "" && viewerUrl !== "about:blank"
+    readonly property int keyframeCount: {
+        var count = 0
+        for (var index = 0; index < timeline.length; ++index) {
+            if (isKeyframe(timeline[index]))
+                count += 1
+        }
+        return count
+    }
     readonly property real maximumLogHeight: Math.max(
         theme.density.activityLogCollapsedHeight,
         Math.min(height * 0.45, height - theme.density.viewerMinHeight)
@@ -45,6 +53,20 @@ Rectangle {
     }
     function fileUrl(path) {
         return path ? "file:///" + String(path).replace(/\\/g, "/") : ""
+    }
+    function isKeyframe(frame) {
+        return !!frame && (frame.selection_status === "selected"
+            || frame.status === "selected")
+    }
+    function sourceFrameIndex(frame, fallback) {
+        if (!frame)
+            return fallback
+        if (frame.source_frame_index !== undefined
+                && frame.source_frame_index !== null)
+            return Number(frame.source_frame_index)
+        if (frame.index !== undefined && frame.index !== null)
+            return Number(frame.index)
+        return fallback
     }
     function activateFrame(index) {
         if (index < 0 || index >= timeline.length)
@@ -327,6 +349,34 @@ Rectangle {
                             font.pixelSize: type.microSize
                             font.weight: type.semibold
                         }
+                        Rectangle {
+                            visible: root.keyframeCount > 0
+                            implicitWidth: keyframeLegend.implicitWidth + 16
+                            implicitHeight: 18
+                            radius: theme.radiusPill
+                            color: theme.accentSoft
+                            border.width: theme.hairline
+                            border.color: theme.lineStrong
+                            Row {
+                                id: keyframeLegend
+                                anchors.centerIn: parent
+                                spacing: 5
+                                Rectangle {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 5
+                                    height: 5
+                                    radius: 3
+                                    color: theme.accent
+                                }
+                                Text {
+                                    text: root.keyframeCount + " keyframes"
+                                    color: theme.ink
+                                    font.family: type.family
+                                    font.pixelSize: type.microSize
+                                    font.weight: type.semibold
+                                }
+                            }
+                        }
                         Text {
                             text: root.playhead >= 0 ? (root.playhead + 1) + " / " + root.timeline.length : ""
                             color: theme.inkTertiary
@@ -351,6 +401,10 @@ Rectangle {
                             id: frameButton
                             required property var modelData
                             required property int index
+                            readonly property bool keyframe: root.isKeyframe(modelData)
+                            readonly property int sourceFrame: root.sourceFrameIndex(
+                                modelData, index)
+                            objectName: "cameraTimelineFrame-" + sourceFrame
                             width: 92
                             height: Math.max(
                                 36,
@@ -360,17 +414,25 @@ Rectangle {
                             hoverEnabled: true
                             focusPolicy: Qt.StrongFocus
                             scale: down ? theme.motion.pressScale : 1
-                            Accessible.name: "Camera frame " + (index + 1)
+                            Accessible.name: keyframe
+                                ? "Selected keyframe " + sourceFrame
+                                : "Camera frame " + sourceFrame
                             Accessible.role: Accessible.Button
                             onClicked: root.activateFrame(index)
                             background: Rectangle {
                                 radius: theme.radiusItem
                                 color: root.playhead === index ? theme.selected
+                                    : frameButton.keyframe ? theme.accentSoft
                                     : frameButton.down ? theme.controlPressed
                                     : frameButton.hovered ? theme.controlHover
                                     : theme.surface
-                                border.width: frameButton.visualFocus || root.playhead === index ? 1 : 0
-                                border.color: frameButton.visualFocus ? theme.focus : theme.accent
+                                border.width: frameButton.visualFocus
+                                    || frameButton.keyframe ? 2
+                                    : root.playhead === index ? 1 : 0
+                                border.color: frameButton.visualFocus
+                                    ? theme.focus
+                                    : frameButton.keyframe ? theme.accent
+                                    : theme.lineStrong
                                 Behavior on color {
                                     ColorAnimation {
                                         duration: theme.motion.hoverDuration
@@ -392,14 +454,38 @@ Rectangle {
                                     anchors.right: parent.right
                                     anchors.bottom: parent.bottom
                                     height: 18
-                                    color: theme.chrome
-                                    opacity: 0.88
+                                    color: frameButton.keyframe ? theme.accent : theme.chrome
+                                    opacity: frameButton.keyframe ? 0.96 : 0.88
                                     Text {
                                         anchors.centerIn: parent
-                                        text: "#" + (modelData.frame_index === undefined ? index : modelData.frame_index)
-                                        color: theme.ink
+                                        text: "#" + frameButton.sourceFrame
+                                        color: frameButton.keyframe
+                                            ? theme.inkOnAccent : theme.ink
                                         font.family: type.monoFamily
                                         font.pixelSize: type.microSize
+                                        font.weight: frameButton.keyframe
+                                            ? type.semibold : type.medium
+                                    }
+                                }
+                                Rectangle {
+                                    visible: frameButton.keyframe
+                                    anchors.left: parent.left
+                                    anchors.top: parent.top
+                                    anchors.margins: 6
+                                    implicitWidth: keyframeLabel.implicitWidth + 12
+                                    implicitHeight: 17
+                                    radius: theme.radiusPill
+                                    color: theme.accent
+                                    border.width: theme.hairline
+                                    border.color: theme.surface
+                                    Text {
+                                        id: keyframeLabel
+                                        anchors.centerIn: parent
+                                        text: "KEY"
+                                        color: theme.inkOnAccent
+                                        font.family: type.family
+                                        font.pixelSize: type.microSize
+                                        font.weight: type.semibold
                                     }
                                 }
                             }
