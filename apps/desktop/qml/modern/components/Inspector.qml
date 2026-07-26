@@ -87,7 +87,7 @@ Rectangle {
                     ToolbarButton {
                         theme: root.theme; type: root.type
                         Layout.fillWidth: true
-                        text: "Workspace"
+                        text: "Project folder"
                         compact: true
                         enabled: !!root.project.project_id
                         onClicked: root.openProjectDirectoryRequested()

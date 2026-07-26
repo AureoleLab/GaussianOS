@@ -55,12 +55,24 @@ def test_project_library_rows_do_not_overlay_child_actions_with_mouse_area() -> 
     library = (COMPONENTS / "ProjectLibrary.qml").read_text(encoding="utf-8-sig")
 
     assert "id: projectRow" in library
-    assert "readonly property bool rowHovered: rowHover.hovered" in library
+    assert 'property string hoveredProjectId: ""' in library
+    assert "root.hoveredProjectId === modelData.id" in library
+    assert 'root.hoveredProjectId = ""' in library
+    assert "else if (root.hoveredProjectId === modelData.id)" in library
+    assert 'objectName: "projectRow-" + modelData.id' in library
     assert "activeFocusOnTab: true" in library
     assert "id: rowTap" in library
     assert "id: rowMouse" not in library
     assert "propagateComposedEvents" not in library
     assert "projectRow.forceActiveFocus(Qt.MouseFocusReason)" in library
+    row_block = library.split("delegate: Rectangle {", 1)[1].split(
+        "Behavior on scale", 1
+    )[0]
+    card_block = library.split("delegate: Panel {", 1)[1].split(
+        "Behavior on border.color", 1
+    )[0]
+    assert "Behavior on color" not in row_block
+    assert "Behavior on color" not in card_block
 
 
 def test_camera_timeline_has_mouse_touchpad_and_scrollbar_navigation() -> None:
@@ -196,11 +208,32 @@ def test_directory_actions_pass_only_project_and_run_identity_to_backend() -> No
     assert "backend.openProjectFolder" not in main
     assert "backend.openProjectsFolder" not in main
     assert "backend.openExportFolder" not in main
-    assert '"location": String(project.workspace_path || "")' in main
+    assert '"location": String(project.display_path || project.library_path || "")' in main
     assert "project.root || project.internal_workspace" not in main
     assert 'title: "Files"' in inspector
     assert "selectedLibraryPath" in library
     assert "enabled: !!root.currentProjectId && root.libraryPath.length > 0" in sidebar
+
+
+def test_project_library_delete_is_primary_and_model_refresh_is_stable() -> None:
+    main = (MODERN / "Main.qml").read_text(encoding="utf-8-sig")
+    library = (COMPONENTS / "ProjectLibrary.qml").read_text(encoding="utf-8-sig")
+    inspector = (COMPONENTS / "ProjectDetailsInspector.qml").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert 'toolTip: "Move to Trash"' in library
+    assert "root.deleteRequested(modelData)" in library
+    assert 'text: "Move to Trash"' in inspector
+    assert "root.deleteRequested(root.project)" in inspector
+    assert 'text: "Archive project"' not in inspector
+    assert 'text: "Archive"' in main  # retained only in the secondary Manage dialog
+    assert "window.requestDelete(project)" in main
+    assert "backend.deleteProject(targetId)" in main
+    assert "projectsSnapshot" in main
+    assert "trashSnapshot" in main
+    assert "if (nextProjects !== projectsSnapshot)" in main
+    assert "if (!projectModelsChanged)" in main
 
 
 def test_motion_tokens_and_critical_surfaces_are_non_linear_and_reduced() -> None:
@@ -338,6 +371,108 @@ window.close()
         script.replace("__COMPONENTS__", COMPONENTS.as_uri())
     )
     assert "hover-isolated" in output
+
+
+def test_project_library_rapid_cross_row_hover_is_strictly_exclusive() -> None:
+    script = r'''
+from PySide6.QtCore import QByteArray, QObject, QPoint, QPointF, Qt, QUrl
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlComponent, QQmlEngine
+from PySide6.QtQuick import QQuickItem
+from PySide6.QtTest import QTest
+
+app = QGuiApplication([])
+engine = QQmlEngine()
+qml = r"""
+import QtQuick
+import QtQuick.Controls
+import "__DESIGN__" as Design
+import "__COMPONENTS__" as UI
+ApplicationWindow {
+    width: 1200
+    height: 800
+    visible: true
+    Design.Motion { id: motion }
+    Design.Density { id: density; mode: "standard" }
+    Design.Theme { id: theme; motion: motion; density: density }
+    Design.Typography { id: typography; densityMode: density.mode }
+    UI.ProjectLibrary {
+        id: library
+        objectName: "library"
+        anchors.fill: parent
+        theme: theme
+        type: typography
+        selectedLibraryPath: "C:/Library"
+        projects: [
+            {"id":"one","project_id":"one","name":"One","status":"Idle","group":"active","date":"2026-01-03","size":"1 MiB","location":"C:/Library","profile":"Balanced","source":"No input"},
+            {"id":"two","project_id":"two","name":"Two","status":"Idle","group":"active","date":"2026-01-02","size":"1 MiB","location":"C:/Library","profile":"Balanced","source":"No input"},
+            {"id":"three","project_id":"three","name":"Three","status":"Idle","group":"active","date":"2026-01-01","size":"1 MiB","location":"C:/Library","profile":"Balanced","source":"No input"}
+        ]
+    }
+}
+"""
+component = QQmlComponent(engine)
+component.setData(
+    QByteArray(qml.encode()),
+    QUrl("file:///gaussianos/project_library_hover_smoke.qml"),
+)
+if component.status() != QQmlComponent.Ready:
+    raise RuntimeError("\n".join(error.toString() for error in component.errors()))
+window = component.create()
+app.processEvents()
+QTest.qWait(250)
+library = window.findChild(QObject, "library")
+project_list = window.findChild(QQuickItem, "projectLibraryList")
+
+def visual_find(name):
+    pending = [project_list]
+    while pending:
+        item = pending.pop()
+        if item.objectName() == name:
+            return item
+        pending.extend(item.childItems())
+    return None
+
+rows = [
+    visual_find("projectRow-one"),
+    visual_find("projectRow-two"),
+    visual_find("projectRow-three"),
+]
+assert all(rows)
+
+def point(item, horizontal=0.45):
+    scene = item.mapToScene(
+        QPointF(item.property("width") * horizontal, item.property("height") / 2)
+    )
+    return QPoint(round(scene.x()), round(scene.y()))
+
+window.requestActivate()
+QTest.mouseMove(window, QPoint(1100, 760))
+QTest.qWait(20)
+for cycle in range(12):
+    for index, row in enumerate(rows):
+        QTest.mouseMove(window, point(row), 1)
+        app.processEvents()
+        assert library.property("hoveredProjectId") == ("one", "two", "three")[index]
+        states = [candidate.property("rowHovered") for candidate in rows]
+        assert states.count(True) == 1, (cycle, index, states)
+
+QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point(rows[0]))
+app.processEvents()
+assert library.property("selectedProjectId") == "one"
+QTest.mouseMove(window, point(rows[1], 0.94), 1)
+app.processEvents()
+assert library.property("hoveredProjectId") == "two"
+assert [candidate.property("rowHovered") for candidate in rows] == [False, True, False]
+print("project-library-hover-exclusive")
+window.close()
+'''
+    output = run_qml_probe(
+        script.replace("__DESIGN__", (MODERN / "design").as_uri()).replace(
+            "__COMPONENTS__", COMPONENTS.as_uri()
+        )
+    )
+    assert "project-library-hover-exclusive" in output
 
 
 def test_ninety_frame_timeline_scrollbar_qml_smoke() -> None:

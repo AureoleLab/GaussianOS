@@ -14,6 +14,7 @@ Rectangle {
     signal renameRequested(var project)
     signal duplicateRequested(var project)
     signal archiveRequested(var project, bool archived)
+    signal deleteRequested(var project)
     signal restoreRequested(var project)
     signal purgeRequested(var project)
 
@@ -148,7 +149,7 @@ Rectangle {
                     visible: !!root.project.project_id && root.project.group !== "trash"
                     theme: root.theme; type: root.type
                     Layout.fillWidth: true
-                    text: "Open workspace"
+                    text: "Open project folder"
                     iconName: "folder"
                     onClicked: root.openFolderRequested(root.project)
                 }
@@ -182,12 +183,13 @@ Rectangle {
                     }
                 }
                 ToolbarButton {
-                    visible: root.project.group === "active"
+                    visible: root.project.group !== "trash"
                     theme: root.theme; type: root.type
                     Layout.fillWidth: true
-                    text: "Archive project"
-                    iconName: "archive"
-                    onClicked: root.archiveRequested(root.project, true)
+                    text: "Move to Trash"
+                    iconName: "trash"
+                    danger: true
+                    onClicked: root.deleteRequested(root.project)
                 }
                 ToolbarButton {
                     visible: root.project.group === "archived" || root.project.group === "trash"

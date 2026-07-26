@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal
 
+from .project_entries import ProjectEntryService
 from .project_store import Project, ProjectStore
 
 
@@ -60,10 +61,12 @@ class ProjectDirectoryService:
         store: ProjectStore,
         open_local_path: Callable[[Path], bool],
         *,
+        entry_service: ProjectEntryService | None = None,
         cooldown_seconds: float = 0.75,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store = store
+        self.entries = entry_service or ProjectEntryService(store)
         self._open_local_path = open_local_path
         self._cooldown_seconds = max(0.0, cooldown_seconds)
         self._clock = clock
@@ -88,6 +91,30 @@ class ProjectDirectoryService:
             raise DirectoryResolutionError(message)
         return path.resolve()
 
+    def _display_path(
+        self,
+        project: Project,
+        workspace_path: Path,
+    ) -> Path:
+        """Map an owned internal path through the readable project entry."""
+
+        if project.workspace_kind != "isolated":
+            return workspace_path
+        paths = self.store.paths(project)
+        try:
+            relative = workspace_path.resolve().relative_to(paths.workspace.resolve())
+            entry = self.entries.ensure(project)
+        except Exception as exc:
+            raise DirectoryResolutionError(
+                f"Could not prepare the project-name entry: {exc}"
+            ) from exc
+        display_path = entry / relative
+        if not display_path.is_dir():
+            raise DirectoryResolutionError(
+                "The project-name entry does not contain the requested directory."
+            )
+        return display_path
+
     def resolve(
         self,
         project_id: str,
@@ -105,7 +132,12 @@ class ProjectDirectoryService:
                 raise DirectoryResolutionError(
                     "The project workspace failed its ownership check."
                 )
-            return DirectoryTarget(project.project_id, None, kind, destination)
+            return DirectoryTarget(
+                project.project_id,
+                None,
+                kind,
+                self._display_path(project, destination),
+            )
 
         if kind == "library":
             if not project.library_root:
@@ -113,11 +145,16 @@ class ProjectDirectoryService:
                     "This legacy/shared project has no managed library directory; "
                     "open its project workspace instead."
                 )
-            destination = self._require_directory(
+            self._require_directory(
                 paths.library_root, "The project library directory is missing."
             )
-            # store.paths() validated the isolated project marker and the exact
-            # library/.gaussianos/projects/project_id ownership relationship.
+            try:
+                self.entries.ensure(project)
+                destination = self.entries.root_for(project)
+            except Exception as exc:
+                raise DirectoryResolutionError(
+                    f"Could not prepare the project library view: {exc}"
+                ) from exc
             return DirectoryTarget(project.project_id, None, kind, destination)
 
         active_run_id = self._active_run(project, run_id)
@@ -156,7 +193,12 @@ class ProjectDirectoryService:
                 ) from exc
             if not has_export:
                 raise DirectoryResolutionError("尚无导出结果")
-        return DirectoryTarget(project.project_id, active_run_id, kind, destination)
+        return DirectoryTarget(
+            project.project_id,
+            active_run_id,
+            kind,
+            self._display_path(project, destination),
+        )
 
     def open(
         self,

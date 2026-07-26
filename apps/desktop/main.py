@@ -16,6 +16,7 @@ from typing import Any
 
 from .pipeline import PipelineController, RuntimePaths, STAGES, TERMINAL_STAGE_STATES
 from .directory_opening import DirectoryOpenResult, ProjectDirectoryService
+from .project_entries import project_display_path
 from .project_paths import ProjectPaths
 from .project_store import (
     Project,
@@ -56,6 +57,7 @@ def project_view(project: Project) -> dict[str, Any]:
     paths = ProjectPaths.from_project(project)
     value["workspace_path"] = str(paths.workspace)
     value["library_path"] = str(paths.library_root) if project.library_root else ""
+    value["display_path"] = str(project_display_path(project))
     value["internal_workspace"] = str(paths.workspace)
     if project.run_id:
         run_root = paths.run(project.run_id).root
@@ -308,6 +310,10 @@ def main() -> int:
         lifecycle_recovery = controller.recover_lifecycle_residuals()
     except Exception as exc:
         lifecycle_recovery = [f"Lifecycle recovery warning: {exc}"]
+    try:
+        project_entry_recovery = directory_service.entries.reconcile()
+    except Exception as exc:
+        project_entry_recovery = [f"Project folder entry recovery warning: {exc}"]
     runtime_messages = doctor()
 
     class ViewerSchemeHandler(QWebEngineUrlSchemeHandler):
@@ -391,6 +397,7 @@ def main() -> int:
                 f"UI shell: {ui_selection.name} ({ui_selection.source})",
                 *[f"Runtime doctor: {message}" for message in runtime_messages],
                 *lifecycle_recovery,
+                *project_entry_recovery,
             ]
             self.active_ui = ui_selection.name
             self.viewer_url = "about:blank"
@@ -691,12 +698,22 @@ def main() -> int:
             self.logs.append(result.message)
             self.changed.emit()
 
+        def _ensure_project_entry(self, project: Project) -> None:
+            if project.workspace_kind != "isolated":
+                return
+            try:
+                entry = directory_service.entries.ensure(project)
+                self.logs.append(f"Project folder ready: {entry}")
+            except Exception as exc:
+                self.logs.append(f"Project folder entry warning: {exc}")
+
         @Slot(str, str)
         def createProject(self, name: str, root: str) -> None:
             if not name.strip() or not root.strip():
                 self.logs.append("Project name and location are required")
             else:
                 project = controller.create_project(name.strip(), root)
+                self._ensure_project_entry(project)
                 self.logs.append(f"Created project {project.name}")
                 self._activate_project(project.project_id)
                 return
@@ -982,13 +999,22 @@ def main() -> int:
 
         @Slot(str)
         def deleteProject(self, project_id: str) -> None:
+            entry_paths: list[Path] = []
             try:
                 target = store.load(project_id)
                 if target.status == "running":
                     raise ProjectDeleteError(
                         "Running projects cannot be deleted; cancel and wait first."
                     )
-                deleted = store.delete(project_id)
+                entry_paths = directory_service.entries.entries_for(target)
+                if entry_paths:
+                    directory_service.entries.remove_captured(target, entry_paths)
+                try:
+                    deleted = store.delete(project_id)
+                except Exception:
+                    if entry_paths:
+                        self._ensure_project_entry(target)
+                    raise
             except Exception as exc:
                 self.logs.append(f"Project delete blocked: {exc}")
                 self._refresh()
@@ -1013,6 +1039,7 @@ def main() -> int:
         def renameProject(self, project_id: str, name: str) -> None:
             try:
                 renamed = store.rename(project_id, name)
+                self._ensure_project_entry(renamed)
                 self.logs.append(f"Renamed project to {renamed.name}")
             except Exception as exc:
                 self.logs.append(f"Project rename blocked: {exc}")
@@ -1070,6 +1097,7 @@ def main() -> int:
         def restoreProject(self, project_id: str) -> None:
             try:
                 restored = store.restore(project_id)
+                self._ensure_project_entry(restored)
                 self.logs.append(f"Restored project {restored.name} from trash")
             except Exception as exc:
                 self.logs.append(f"Project restore blocked: {exc}")
@@ -1189,12 +1217,15 @@ def main() -> int:
                 self.logs.append(message)
                 if kind == "lifecycle_duplicate_ready":
                     source_project_id = data.get("source_project_id")
+                    copied_project_id = str(data.get("project_id", ""))
+                    if copied_project_id:
+                        self._ensure_project_entry(store.load(copied_project_id))
                     if (
                         source_project_id == self.session.project_id
                         and data.get("generation") == self.session.generation
                     ):
                         self._activate_project(
-                            str(data.get("project_id", "")),
+                            copied_project_id,
                             load_viewer=data.get("mode") == "complete",
                         )
                         return

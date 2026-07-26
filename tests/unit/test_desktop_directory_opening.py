@@ -6,6 +6,7 @@ import pytest
 
 from apps.desktop.directory_opening import ProjectDirectoryService
 from apps.desktop.main import project_view
+from apps.desktop.project_entries import ENTRY_DIRECTORY_NAME
 from apps.desktop.project_store import (
     Project,
     ProjectStore,
@@ -38,6 +39,9 @@ def test_new_project_library_workspace_and_library_display_are_consistent(
     assert Path(restored.library_root or "") == library.resolve()
     assert Path(view["workspace_path"]) == expected_workspace
     assert Path(view["library_path"]) == library.resolve()
+    assert Path(view["display_path"]) == (
+        library / ENTRY_DIRECTORY_NAME / "New project"
+    ).resolve()
     assert (expected_workspace / ".gaussianos-project.json").is_file()
     assert (expected_workspace / "inputs" / "analysis").is_dir()
     assert (expected_workspace / "runs").is_dir()
@@ -64,10 +68,9 @@ def test_directory_service_opens_only_existing_owned_project_paths(
 
     assert workspace_result.opened
     assert library_result.opened
-    assert opened == [
-        Path(project.root).resolve(),
-        library.resolve(),
-    ]
+    assert opened[0].name == "Owned"
+    assert opened[0].resolve() == Path(project.root).resolve()
+    assert opened[1] == (library / ENTRY_DIRECTORY_NAME).resolve()
 
 
 def test_missing_exports_and_stale_active_run_never_call_shell(
@@ -103,7 +106,8 @@ def test_missing_exports_and_stale_active_run_never_call_shell(
     export.write_bytes(b"ply")
     available = service.open(project.project_id, "exports", run_id)
     assert available.opened
-    assert opened == [run_paths.exports.resolve()]
+    assert opened[0].name == "exports"
+    assert opened[0].resolve() == run_paths.exports.resolve()
 
 
 def test_run_inputs_artifacts_and_duplicate_request_handling(
@@ -133,11 +137,12 @@ def test_run_inputs_artifacts_and_duplicate_request_handling(
     duplicate = service.open(project.project_id, "artifacts", run_id)
 
     assert duplicate.status == "duplicate"
-    assert opened == [
+    assert [path.resolve() for path in opened] == [
         run_paths.root.resolve(),
         run_paths.frames.resolve(),
         run_paths.artifacts.resolve(),
     ]
+    assert all(ENTRY_DIRECTORY_NAME in path.parts for path in opened)
 
 
 def test_legacy_shared_opening_is_read_only_and_has_no_synthetic_library(

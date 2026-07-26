@@ -25,7 +25,10 @@ ApplicationWindow {
     property var runtimeState: ({})
     property var librarySelection: ({})
     property var managedProject: ({})
+    property var deleteTarget: ({})
     property var purgeTarget: ({})
+    property string projectsSnapshot: ""
+    property string trashSnapshot: ""
     property string currentProject: current.name || "No project selected"
     property string currentProjectId: current.project_id || ""
     property bool leftOpen: true
@@ -110,7 +113,7 @@ ApplicationWindow {
             "group": group,
             "date": String(project.updated_at || project.deleted_at || project.archived_at || "—"),
             "size": formatBytes(project.estimated_bytes || 0),
-            "location": String(project.workspace_path || ""),
+            "location": String(project.display_path || project.library_path || ""),
             "library_path": String(project.library_path || ""),
             "profile": String(project.profile || "—"),
             "source": project.input_kind
@@ -121,14 +124,26 @@ ApplicationWindow {
     }
 
     function refreshBackend() {
-        projects = parseJson(backend.projectsJson, [])
-        trashProjects = parseJson(backend.trashJson, [])
+        var nextProjects = backend.projectsJson
+        var nextTrash = backend.trashJson
+        var projectModelsChanged = nextProjects !== projectsSnapshot
+            || nextTrash !== trashSnapshot
+        if (nextProjects !== projectsSnapshot) {
+            projectsSnapshot = nextProjects
+            projects = parseJson(nextProjects, [])
+        }
+        if (nextTrash !== trashSnapshot) {
+            trashSnapshot = nextTrash
+            trashProjects = parseJson(nextTrash, [])
+        }
         current = parseJson(backend.currentJson, {})
         if (current.project_id)
             modernSettings.lastProjectId = current.project_id
         importDraft = parseJson(backend.importJson, {})
         settingsState = parseJson(backend.settingsJson, {})
         runtimeState = parseJson(backend.runtimeJson, {})
+        if (!projectModelsChanged)
+            return
         if (librarySelection.project_id) {
             for (var index = 0; index < libraryProjects.length; ++index) {
                 if (libraryProjects[index].project_id === librarySelection.project_id) {
@@ -164,6 +179,13 @@ ApplicationWindow {
         purgeTarget = project
         purgeConfirm.text = ""
         purgeDialog.open()
+    }
+
+    function requestDelete(project) {
+        if (!project || !project.project_id || project.group === "trash")
+            return
+        deleteTarget = project
+        deleteDialog.open()
     }
 
     function localPathFromUrl(value) {
@@ -646,6 +668,7 @@ ApplicationWindow {
                     onArchiveRequested: function(project, archived) {
                         backend.setProjectArchived(project.project_id, archived)
                     }
+                    onDeleteRequested: function(project) { window.requestDelete(project) }
                     onRestoreRequested: function(project) { backend.restoreProject(project.project_id) }
                     onPurgeRequested: function(project) { window.requestPurge(project) }
                     Behavior on opacity {
@@ -796,6 +819,7 @@ ApplicationWindow {
                         onArchiveRequested: function(project, archived) {
                             backend.setProjectArchived(project.project_id, archived)
                         }
+                        onDeleteRequested: function(project) { window.requestDelete(project) }
                         onRestoreRequested: function(project) { backend.restoreProject(project.project_id) }
                         onPurgeRequested: function(project) { window.requestPurge(project) }
                         Behavior on opacity {
@@ -1103,8 +1127,8 @@ ApplicationWindow {
                 danger: true
                 visible: managedProject.group !== "trash"
                 onClicked: {
-                    backend.deleteProject(managedProject.project_id)
                     manageDialog.close()
+                    window.requestDelete(managedProject)
                 }
             }
             Item { Layout.fillWidth: true }
@@ -1498,6 +1522,63 @@ ApplicationWindow {
                 text: "Done"
                 primary: true
                 onClicked: settingsDialog.close()
+            }
+        }
+    }
+
+    UI.Dialog {
+        id: deleteDialog
+        theme: window.themeTokens
+        type: window.typeTokens
+        title: "Move project to Trash?"
+        subtitle: "“" + (deleteTarget.name || "Project") + "” can be restored later from Project Library."
+        dialogWidth: 480
+        onClosed: deleteTarget = ({})
+
+        UI.Panel {
+            theme: window.themeTokens
+            Layout.fillWidth: true
+            implicitHeight: 72
+            color: theme.surfaceSunken
+            border.color: theme.lineStrong
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 10
+                UI.AppIcon { name: "trash"; size: theme.density.iconMajor; color: theme.ink }
+                Text {
+                    Layout.fillWidth: true
+                    text: deleteTarget.raw && deleteTarget.raw.legacy_workspace
+                        ? "Only GaussianOS metadata will be moved to Trash. Existing legacy/shared files will remain untouched."
+                        : "The isolated project workspace and its readable name entry will be moved out of the active library. This is not permanent deletion."
+                    color: theme.inkSecondary
+                    font.family: type.family
+                    font.pixelSize: type.labelSize
+                    lineHeight: type.bodyLine
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Item { Layout.fillWidth: true }
+            UI.ToolbarButton {
+                theme: window.themeTokens; type: window.typeTokens
+                text: "Cancel"
+                onClicked: deleteDialog.close()
+            }
+            UI.ToolbarButton {
+                theme: window.themeTokens; type: window.typeTokens
+                text: "Move to Trash"
+                iconName: "trash"
+                danger: true
+                onClicked: {
+                    var targetId = deleteTarget.project_id
+                    var targetName = deleteTarget.name
+                    deleteDialog.close()
+                    backend.deleteProject(targetId)
+                    showNotice("Moved " + targetName + " to Trash")
+                }
             }
         }
     }

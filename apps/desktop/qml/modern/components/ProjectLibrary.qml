@@ -14,6 +14,7 @@ Rectangle {
     property string searchText: ""
     property string selectedProjectId: ""
     property string selectedLibraryPath: ""
+    property string hoveredProjectId: ""
     property var projects: []
     readonly property var visibleProjects: {
         var query = searchText.trim().toLowerCase()
@@ -38,6 +39,7 @@ Rectangle {
     signal renameRequested(var project)
     signal duplicateRequested(var project)
     signal archiveRequested(var project, bool archived)
+    signal deleteRequested(var project)
     signal restoreRequested(var project)
     signal purgeRequested(var project)
 
@@ -62,9 +64,19 @@ Rectangle {
         viewModeMotion.restart()
     }
 
-    onFilterModeChanged: animateResults()
-    onSortModeChanged: animateResults()
-    onSearchTextChanged: searchMotionTimer.restart()
+    onProjectsChanged: hoveredProjectId = ""
+    onFilterModeChanged: {
+        hoveredProjectId = ""
+        animateResults()
+    }
+    onSortModeChanged: {
+        hoveredProjectId = ""
+        animateResults()
+    }
+    onSearchTextChanged: {
+        hoveredProjectId = ""
+        searchMotionTimer.restart()
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -264,8 +276,10 @@ Rectangle {
                                 id: projectRow
                                 required property var modelData
                                 required property int index
+                                objectName: "projectRow-" + modelData.id
                                 readonly property bool rowSelected: root.selectedProjectId === modelData.id
-                                readonly property bool rowHovered: rowHover.hovered
+                                readonly property bool rowHovered:
+                                    root.hoveredProjectId === modelData.id
                                 width: ListView.view.width
                                 height: theme.density.listRowHeight
                                 activeFocusOnTab: true
@@ -326,17 +340,23 @@ Rectangle {
                                     RowLayout {
                                         Layout.preferredWidth: theme.density.libraryActionsWidth
                                         spacing: theme.density.iconActionGap
-                                        IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; iconName: "folder"; toolTip: "Open directory"; onClicked: root.openFolderRequested(modelData) }
+                                        IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; iconName: "folder"; toolTip: "Open project folder"; onClicked: root.openFolderRequested(modelData) }
                                         IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; iconName: "rename"; toolTip: "Rename"; onClicked: root.renameRequested(modelData) }
                                         IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; iconName: "copy"; toolTip: "Duplicate"; onClicked: root.duplicateRequested(modelData) }
-                                        IconButton { visible: modelData.group === "active"; theme: root.theme; type: root.type; muted: true; iconName: "archive"; toolTip: "Archive"; onClicked: root.archiveRequested(modelData, true) }
                                         IconButton { visible: modelData.group === "archived" || modelData.group === "trash"; theme: root.theme; type: root.type; muted: true; iconName: "restore"; toolTip: modelData.group === "trash" ? "Restore" : "Unarchive"; onClicked: modelData.group === "trash" ? root.restoreRequested(modelData) : root.archiveRequested(modelData, false) }
+                                        IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; danger: true; iconName: "trash"; toolTip: "Move to Trash"; onClicked: root.deleteRequested(modelData) }
                                         IconButton { visible: modelData.group === "trash"; theme: root.theme; type: root.type; muted: true; iconName: "delete"; toolTip: "Delete forever"; danger: true; onClicked: root.purgeRequested(modelData) }
                                     }
                                 }
                                 HoverHandler {
                                     id: rowHover
                                     cursorShape: Qt.PointingHandCursor
+                                    onHoveredChanged: {
+                                        if (hovered)
+                                            root.hoveredProjectId = modelData.id
+                                        else if (root.hoveredProjectId === modelData.id)
+                                            root.hoveredProjectId = ""
+                                    }
                                 }
                                 TapHandler {
                                     id: rowTap
@@ -346,10 +366,6 @@ Rectangle {
                                         projectRow.forceActiveFocus(Qt.MouseFocusReason)
                                         root.choose(modelData)
                                     }
-                                }
-                                Behavior on color {
-                                    enabled: projectRow.rowHovered || projectRow.rowSelected || rowTap.pressed
-                                    ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
                                 }
                                 Behavior on scale {
                                     NumberAnimation {
@@ -383,8 +399,10 @@ Rectangle {
                 delegate: Panel {
                     id: projectCard
                     required property var modelData
+                    objectName: "projectCard-" + modelData.id
                     readonly property bool cardSelected: root.selectedProjectId === modelData.id
-                    readonly property bool cardHovered: cardHover.hovered
+                    readonly property bool cardHovered:
+                        root.hoveredProjectId === modelData.id
                     width: projectGrid.cellWidth - theme.density.itemGap
                     height: projectGrid.cellHeight - theme.density.itemGap
                     theme: root.theme
@@ -423,13 +441,20 @@ Rectangle {
                         RowLayout {
                             Layout.fillWidth: true
                             Text { Layout.fillWidth: true; text: modelData.size; color: theme.inkTertiary; font.family: type.family; font.pixelSize: type.metadataSize }
-                            IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; iconName: "folder"; toolTip: "Open directory"; onClicked: root.openFolderRequested(modelData) }
+                            IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; iconName: "folder"; toolTip: "Open project folder"; onClicked: root.openFolderRequested(modelData) }
                             IconButton { theme: root.theme; type: root.type; muted: true; iconName: "manage"; toolTip: "Project actions"; onClicked: root.renameRequested(modelData) }
+                            IconButton { visible: modelData.group !== "trash"; theme: root.theme; type: root.type; muted: true; danger: true; iconName: "trash"; toolTip: "Move to Trash"; onClicked: root.deleteRequested(modelData) }
                         }
                     }
                     HoverHandler {
                         id: cardHover
                         cursorShape: Qt.PointingHandCursor
+                        onHoveredChanged: {
+                            if (hovered)
+                                root.hoveredProjectId = modelData.id
+                            else if (root.hoveredProjectId === modelData.id)
+                                root.hoveredProjectId = ""
+                        }
                     }
                     TapHandler {
                         id: cardTap
@@ -439,9 +464,6 @@ Rectangle {
                             projectCard.forceActiveFocus(Qt.MouseFocusReason)
                             root.choose(modelData)
                         }
-                    }
-                    Behavior on color {
-                        ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
                     }
                     Behavior on border.color {
                         ColorAnimation { duration: theme.motion.hoverDuration; easing.type: Easing.OutCubic }
