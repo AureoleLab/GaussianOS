@@ -23,6 +23,7 @@ ApplicationWindow {
     property var importDraft: ({})
     property var settingsState: ({})
     property var runtimeState: ({})
+    property var exportState: ({})
     property var librarySelection: ({})
     property var managedProject: ({})
     property var deleteTarget: ({})
@@ -34,6 +35,8 @@ ApplicationWindow {
     property bool leftOpen: true
     property bool inspectorOpen: true
     property bool running: current.status === "running"
+    property bool exporting: exportState.status === "exporting"
+    property string exportSnapshot: ""
     property int progress: Math.round(Number(current.progress || 0) * 100)
     property string globalNotice: ""
     property string selectedVideoPath: ""
@@ -153,6 +156,29 @@ ApplicationWindow {
             }
         }
         librarySelection = libraryProjects.length > 0 ? libraryProjects[0] : ({})
+    }
+
+    function refreshExportState() {
+        var next = backend.exportJson
+        if (next === exportSnapshot)
+            return
+        exportSnapshot = next
+        exportState = parseJson(next, {"status": "idle"})
+        if (exportState.status === "exporting") {
+            showNotice(exportState.message || "Exporting complete Scene Bundle…")
+        } else if (exportState.status === "succeeded") {
+            showNotice("Export complete: " + String(exportState.path || ""))
+            exportResultDialog.open()
+        } else if (exportState.status === "failed") {
+            showNotice("Export failed: " + String(exportState.error || "Unknown error"))
+            exportResultDialog.open()
+        }
+    }
+
+    function requestSceneExport() {
+        if (!currentProjectId || exporting)
+            return
+        exportFolderPicker.open()
     }
 
     function openProject(project) {
@@ -296,6 +322,7 @@ ApplicationWindow {
         target: backend
         function onChanged() { window.refreshBackend() }
         function onImportChanged() { window.refreshBackend() }
+        function onExportChanged() { window.refreshExportState() }
         function onSettingsChanged() { window.refreshBackend() }
         function onViewerUrlChanged() { window.refreshBackend() }
         function onViewerStatusChanged() { window.refreshBackend() }
@@ -306,6 +333,7 @@ ApplicationWindow {
 
     Component.onCompleted: {
         refreshBackend()
+        refreshExportState()
         if (modernSettings.restoreLastProject && modernSettings.lastProjectId)
             Qt.callLater(function() { backend.selectProject(modernSettings.lastProjectId) })
     }
@@ -401,14 +429,11 @@ ApplicationWindow {
                 }
                 UI.ToolbarButton {
                     theme: window.themeTokens; type: window.typeTokens
-                    text: "Export"
+                    text: exporting ? "Exporting" : "Export"
                     iconName: "export"
                     compact: true
-                    enabled: !!window.currentProjectId
-                    onClicked: backend.openExportsDirectory(
-                        window.currentProjectId,
-                        String(window.current.run_id || "")
-                    )
+                    enabled: !!window.currentProjectId && !window.exporting
+                    onClicked: window.requestSceneExport()
                 }
 
                 Item { Layout.fillWidth: true }
@@ -583,6 +608,7 @@ ApplicationWindow {
                     type: window.typeTokens
                     projectName: window.currentProject
                     running: window.running
+                    exporting: window.exporting
                     notice: window.globalNotice
                     viewerUrl: backend ? backend.viewerUrl : "about:blank"
                     viewerStatus: backend ? backend.viewerStatus : ""
@@ -598,10 +624,7 @@ ApplicationWindow {
                     onRunRequested: backend.start()
                     onCancelRequested: backend.cancel()
                     onLoadViewerRequested: backend.loadViewer()
-                    onExportRequested: backend.openExportsDirectory(
-                        window.currentProjectId,
-                        String(window.current.run_id || "")
-                    )
+                    onExportRequested: window.requestSceneExport()
                     onViewerTitleChanged: function(title) { backend.viewerPageTitle(title) }
                     onAcceptanceResult: function(result) { backend.viewerAcceptanceResult(result) }
                     onLogHeightAdjusted: function(value, reset) {
@@ -911,6 +934,58 @@ ApplicationWindow {
         id: projectFolderPicker
         title: "Choose project workspace"
         onAccepted: newProjectRoot.text = window.localPathFromUrl(selectedFolder)
+    }
+    FolderDialog {
+        id: exportFolderPicker
+        title: "Choose save directory for Scene Bundle"
+        onAccepted: backend.exportSceneBundle(
+            window.currentProjectId,
+            String(window.current.run_id || ""),
+            window.localPathFromUrl(selectedFolder)
+        )
+    }
+
+    UI.Dialog {
+        id: exportResultDialog
+        objectName: "exportResultDialog"
+        theme: window.themeTokens
+        type: window.typeTokens
+        title: exportState.status === "succeeded"
+            ? "Scene Bundle exported" : "Scene Bundle export failed"
+        subtitle: exportState.status === "succeeded"
+            ? String(exportState.path || "")
+            : String(exportState.error || "Unknown export error")
+        dialogWidth: 620
+
+        Text {
+            Layout.fillWidth: true
+            text: exportState.status === "succeeded"
+                ? "Size: " + window.formatBytes(exportState.total_bytes)
+                    + "\nSHA-256 (scene_manifest.json): "
+                    + String(exportState.sha256 || "")
+                : "The export was not committed. No partial Scene Bundle was left behind."
+            color: exportState.status === "succeeded" ? theme.inkSecondary : theme.danger
+            font.family: exportState.status === "succeeded" ? type.monoFamily : type.family
+            font.pixelSize: type.microSize
+            wrapMode: Text.WrapAnywhere
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Item { Layout.fillWidth: true }
+            UI.ToolbarButton {
+                theme: window.themeTokens; type: window.typeTokens
+                text: "Close"
+                onClicked: exportResultDialog.close()
+            }
+            UI.ToolbarButton {
+                theme: window.themeTokens; type: window.typeTokens
+                text: "Open Folder"
+                iconName: "folder"
+                primary: true
+                visible: exportState.status === "succeeded"
+                onClicked: backend.openExportResultDirectory()
+            }
+        }
     }
 
     UI.Dialog {

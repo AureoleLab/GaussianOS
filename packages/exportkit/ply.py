@@ -244,6 +244,18 @@ def read_pointcloud_ply(source: str | os.PathLike[str]) -> PointCloudTensors:
 
     path = Path(source).absolute()
     _require_suffix(path, POINTCLOUD_SUFFIX)
+    return _read_pointcloud_ply(path)
+
+
+def read_pointcloud_ply_payload(
+    source: str | os.PathLike[str],
+) -> PointCloudTensors:
+    """Read a pointcloud-v1 payload whose export filename is user-facing."""
+
+    return _read_pointcloud_ply(Path(source).absolute())
+
+
+def _read_pointcloud_ply(path: Path) -> PointCloudTensors:
     with path.open("rb") as stream:
         header = _read_header(stream)
         if _comment_value(header.comments, "gaussian_factory_format") != "pointcloud-v1":
@@ -377,6 +389,18 @@ def read_gaussian_ply_document(
 
     path = Path(source).absolute()
     _require_suffix(path, GAUSSIAN_SUFFIX)
+    return _read_gaussian_ply_document(path)
+
+
+def read_gaussian_ply_payload(
+    source: str | os.PathLike[str],
+) -> GaussianTensors:
+    """Read a graphdeco-gs-v1 payload whose export filename is user-facing."""
+
+    return _read_gaussian_ply_document(Path(source).absolute()).gaussians
+
+
+def _read_gaussian_ply_document(path: Path) -> GaussianPlyDocument:
     with path.open("rb") as stream:
         header = _read_header(stream)
         expected_comments = {

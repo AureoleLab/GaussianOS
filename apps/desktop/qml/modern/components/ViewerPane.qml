@@ -11,6 +11,7 @@ Rectangle {
     property string projectName: "No project selected"
     property bool logOpen: true
     property bool running: false
+    property bool exporting: false
     property string notice: ""
     property string viewerUrl: "about:blank"
     property string viewerStatus: "Select a project"
@@ -171,8 +172,9 @@ Rectangle {
                 IconButton {
                     theme: root.theme; type: root.type
                     iconName: "export"
-                    toolTip: "Open export folder"
+                    toolTip: root.exporting ? "Export in progress" : "Export Scene Bundle"
                     prominent: true
+                    enabled: !root.exporting
                     onClicked: root.exportRequested()
                 }
             }

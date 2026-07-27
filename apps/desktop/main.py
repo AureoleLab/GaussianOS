@@ -27,6 +27,7 @@ from .project_store import (
 from .project_session import AsyncIdentity, ProjectSession
 from .viewer import ViewerScene, load_viewer_scene
 from .sampling import discover_ffprobe
+from .scene_export import SceneBundleExporter
 from .ui_settings import UI_CHOICES, UiSettingsStore, resolve_ui
 from .video_import import VideoImportSession
 
@@ -296,6 +297,7 @@ def main() -> int:
     app.setFont(QFont("Montserrat", 10))
     store = ProjectStore(args.projects)
     controller = PipelineController(store, args.artifacts)
+    scene_exporter = SceneBundleExporter(store)
     directory_service = ProjectDirectoryService(
         store,
         lambda path: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))),
@@ -380,6 +382,7 @@ def main() -> int:
     class Backend(QObject):
         changed = Signal()
         importChanged = Signal()
+        exportChanged = Signal()
         viewerUrlChanged = Signal()
         viewerStatusChanged = Signal()
         settingsChanged = Signal()
@@ -412,6 +415,7 @@ def main() -> int:
             self.import_generation = 0
             self.import_target_project_id = ""
             self.import_target_generation = 0
+            self.export_state: dict[str, Any] = {"status": "idle"}
 
         def _project(self) -> Project | None:
             try:
@@ -448,6 +452,8 @@ def main() -> int:
                     "Archived projects must be restored before they can be opened."
                 )
             self.session.switch(project_id)
+            self.export_state = {"status": "idle"}
+            self.exportChanged.emit()
             self._clear_project_presentation(
                 "Validating project artifacts…"
                 if project is not None
@@ -533,6 +539,10 @@ def main() -> int:
         @Property(str, notify=importChanged)
         def importJson(self) -> str:
             return json.dumps(self.import_state, ensure_ascii=False)
+
+        @Property(str, notify=exportChanged)
+        def exportJson(self) -> str:
+            return json.dumps(self.export_state, ensure_ascii=False)
 
         def _set_active_ui(self, value: str) -> None:
             if self.active_ui == value:
@@ -997,6 +1007,88 @@ def main() -> int:
                 directory_service.open(project_id, "exports", run_id or None)
             )
 
+        @Slot(str, str, str)
+        def exportSceneBundle(
+            self, project_id: str, run_id: str, parent_directory: str
+        ) -> None:
+            if self.export_state.get("status") == "exporting":
+                return
+            project = self._project()
+            if project is None or project.project_id != project_id:
+                self.export_state = {
+                    "status": "failed",
+                    "error": "The selected project is no longer active.",
+                }
+                self.exportChanged.emit()
+                return
+            generation = self.session.generation
+            identity = AsyncIdentity(
+                project_id, run_id or None, generation, "user_export"
+            ).payload()
+            self.export_state = {
+                "status": "exporting",
+                "project_id": project_id,
+                "run_id": run_id,
+                "generation": generation,
+                "message": "Exporting complete Scene Bundle…",
+            }
+            self.logs.append(
+                f"Scene Bundle export queued for {project_id}/{run_id}"
+            )
+            record_ui(
+                f"Scene Bundle export queued for {project_id}/{run_id} "
+                f"to {parent_directory}"
+            )
+            self.exportChanged.emit()
+            self.changed.emit()
+
+            def export() -> None:
+                try:
+                    result = scene_exporter.export(
+                        project_id, run_id, parent_directory
+                    )
+                    self.event.emit(
+                        "scene_export_ready",
+                        f"Scene Bundle exported to {result.path}",
+                        {**identity, **result.payload()},
+                    )
+                except Exception as exc:
+                    self.event.emit(
+                        "scene_export_failed",
+                        str(exc),
+                        identity,
+                    )
+
+            threading.Thread(
+                target=export,
+                name=f"scene-export-{project_id[:8]}",
+                daemon=True,
+            ).start()
+
+        @Slot()
+        def openExportResultDirectory(self) -> None:
+            if self.export_state.get("status") != "succeeded":
+                return
+            if (
+                self.export_state.get("project_id") != self.session.project_id
+                or self.export_state.get("generation") != self.session.generation
+            ):
+                self.logs.append("Export result is stale for the active project.")
+                self.changed.emit()
+                return
+            destination = Path(str(self.export_state.get("path", ""))).resolve()
+            if not destination.is_dir():
+                self.logs.append(f"Export result directory is missing: {destination}")
+                self.changed.emit()
+                return
+            opened = bool(
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(destination)))
+            )
+            self.logs.append(
+                f"{'Opened' if opened else 'Could not open'} export result: {destination}"
+            )
+            self.changed.emit()
+
         @Slot(str)
         def deleteProject(self, project_id: str) -> None:
             entry_paths: list[Path] = []
@@ -1290,7 +1382,8 @@ def main() -> int:
                     self.changed.emit()
                     return
                 if data.get("stage") not in {
-                    *STAGES, "pipeline", "viewer", "timeline", "ingest"
+                    *STAGES, "pipeline", "viewer", "timeline", "ingest",
+                    "user_export",
                 }:
                     return
 
@@ -1319,6 +1412,24 @@ def main() -> int:
                 self.viewer_status = f"Viewer load failed: {message}"
                 self.viewerUrlChanged.emit()
                 self.viewerStatusChanged.emit()
+            elif kind == "scene_export_ready":
+                record_ui(f"Scene Bundle export succeeded: {message}")
+                self.export_state = {
+                    **data,
+                    "status": "succeeded",
+                    "message": message,
+                }
+                self.exportChanged.emit()
+            elif kind == "scene_export_failed":
+                record_ui(
+                    f"Scene Bundle export failed for {project_id}/{run_id}: {message}"
+                )
+                self.export_state = {
+                    **data,
+                    "status": "failed",
+                    "error": message,
+                }
+                self.exportChanged.emit()
             elif kind == "complete":
                 self._refresh()
                 if data.get("status") == "succeeded":

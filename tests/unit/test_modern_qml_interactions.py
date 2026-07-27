@@ -17,6 +17,7 @@ MODERN = (
     / "modern"
 )
 COMPONENTS = MODERN / "components"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_qml_probe(script: str) -> str:
@@ -223,6 +224,24 @@ def test_directory_actions_pass_only_project_and_run_identity_to_backend() -> No
     assert 'title: "Files"' in inspector
     assert "selectedLibraryPath" in library
     assert "enabled: !!root.currentProjectId && root.libraryPath.length > 0" in sidebar
+
+
+def test_modern_export_signal_reaches_real_backend_and_classic_remains_available() -> None:
+    main = (MODERN / "Main.qml").read_text(encoding="utf-8-sig")
+    viewer = (COMPONENTS / "ViewerPane.qml").read_text(encoding="utf-8-sig")
+    backend = (ROOT / "apps" / "desktop" / "main.py").read_text(encoding="utf-8")
+    classic = (
+        ROOT / "apps" / "desktop" / "qml" / "classic" / "Main.qml"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "onExportRequested: window.requestSceneExport()" in main
+    assert "backend.exportSceneBundle(" in main
+    assert "signal exportRequested()" in viewer
+    assert "def exportSceneBundle(" in backend
+    assert "scene_exporter.export(" in backend
+    assert "scene_export_ready" in backend
+    assert "scene_export_failed" in backend
+    assert "onClicked: backend.openExportsDirectory(" in classic
 
 
 def test_project_library_delete_is_primary_and_model_refresh_is_stable() -> None:
