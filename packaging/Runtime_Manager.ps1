@@ -9,6 +9,9 @@ param(
     [Parameter(ParameterSetName = 'Repair')][string]$Source
 )
 $arguments = [System.Collections.Generic.List[string]]::new()
+function Quote-ProcessArgument([string]$Value) {
+    return '"' + $Value.Replace('"', '\"') + '"'
+}
 switch ($PSCmdlet.ParameterSetName) {
     'List' { $arguments.Add('--runtime-list') }
     'Install' {
@@ -20,7 +23,7 @@ switch ($PSCmdlet.ParameterSetName) {
     'InstallAll' { $arguments.Add('--runtime-install-all') }
     'Import' {
         $arguments.Add('--runtime-import')
-        $arguments.Add($Import)
+        $arguments.Add((Quote-ProcessArgument $Import))
     }
     'Verify' { $arguments.Add('--runtime-verify-full') }
     'Repair' {
@@ -30,7 +33,7 @@ switch ($PSCmdlet.ParameterSetName) {
         }
         if ($Source) {
             $arguments.Add('--runtime-repair-source')
-            $arguments.Add($Source)
+            $arguments.Add((Quote-ProcessArgument $Source))
         }
     }
 }

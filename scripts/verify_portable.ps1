@@ -5,12 +5,16 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $archivePath = (Resolve-Path $Archive).Path
+$verifyWord = -join @([char]0x9A8C, [char]0x8BC1)
+$firstLaunch = -join @([char]0x9996, [char]0x6B21, [char]0x542F, [char]0x52A8)
+$movedLabel = -join @([char]0x79FB, [char]0x52A8, [char]0x540E, [char]0x7684)
+$longPathLabel = -join @([char]0x957F, [char]0x8DEF, [char]0x5F84)
 $scratch = Join-Path ([IO.Path]::GetTempPath()) (
-    "GaussianOS 验证 with spaces " + [guid]::NewGuid()
+    "GaussianOS $verifyWord with spaces " + [guid]::NewGuid()
 )
-$extract = Join-Path $scratch '首次启动'
+$extract = Join-Path $scratch $firstLaunch
 $movedRoot = Join-Path $scratch (
-    '移动后的 Portable Core ' + ('长路径-' * 8)
+    "$movedLabel Portable Core " + (($longPathLabel + '-') * 8)
 )
 New-Item -ItemType Directory -Force -Path $extract | Out-Null
 try {
@@ -69,13 +73,13 @@ try {
 
     foreach ($ui in 'modern', 'classic') {
         $evidence = Join-Path $root "Logs\$ui-clean-smoke.png"
+        $argumentLine = (
+            '--ui {0} --acceptance-evidence "{1}" --acceptance-delay-ms 5000' -f `
+                $ui, $evidence.Replace('"', '\"')
+        )
         $process = Start-Process `
             -FilePath $exe `
-            -ArgumentList @(
-                '--ui', $ui,
-                '--acceptance-evidence', $evidence,
-                '--acceptance-delay-ms', '5000'
-            ) `
+            -ArgumentList $argumentLine `
             -WorkingDirectory $root `
             -Wait `
             -PassThru

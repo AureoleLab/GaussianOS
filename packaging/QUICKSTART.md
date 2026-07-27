@@ -5,7 +5,7 @@
    `Start_GaussianOS_Classic.bat` for ClassicUI.
 3. A Core-only installation starts normally and reports that Runtime is not
    installed. Projects and exports remain available.
-4. For offline use, extract `GaussianOS-Offline-Runtime-win-x64.zip`, then run:
+4. For offline use, extract `GaussianOS-Offline-Runtime-win-x64.7z`, then run:
 
    `Runtime_Manager.ps1 -Import "<offline-package-directory>"`
 

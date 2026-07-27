@@ -14,6 +14,11 @@ $pyinstallerWork = Join-Path $buildRoot 'pyinstaller-work'
 $specRoot = Join-Path $buildRoot 'spec'
 $package = Join-Path $output 'GaussianOS-Portable-Core-win-x64'
 $application = Join-Path $package 'Application'
+$qmlData = (Join-Path $root 'apps\desktop\qml') + ';apps/desktop/qml'
+$viewerData = (Join-Path $root 'apps\desktop\viewer_web') + ';apps/desktop/viewer_web'
+$configsData = (Join-Path $root 'configs') + ';configs'
+$workersData = (Join-Path $root 'workers') + ';workers'
+$packagesData = (Join-Path $root 'packages') + ';packages'
 
 if (Test-Path -LiteralPath $buildRoot) {
     $resolvedBuild = [IO.Path]::GetFullPath($buildRoot)
@@ -46,11 +51,11 @@ try {
         --specpath $specRoot `
         --hidden-import PySide6.QtWebEngineCore `
         --hidden-import PySide6.QtWebEngineQuick `
-        --add-data 'apps/desktop/qml;apps/desktop/qml' `
-        --add-data 'apps/desktop/viewer_web;apps/desktop/viewer_web' `
-        --add-data 'configs;configs' `
-        --add-data 'workers;workers' `
-        --add-data 'packages;packages' `
+        --add-data $qmlData `
+        --add-data $viewerData `
+        --add-data $configsData `
+        --add-data $workersData `
+        --add-data $packagesData `
         apps/desktop/__main__.py
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed ($LASTEXITCODE)."

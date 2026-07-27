@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -215,3 +218,40 @@ def test_moved_core_relocates_runtime_without_old_absolute_paths(
 
     assert layout_paths().runtime == second / "Runtime"
     assert doctor_report(full=True).runtime_status == "ok"
+
+
+def test_repair_only_cli_has_shared_progress_callback(tmp_path: Path) -> None:
+    payload = b"cli-repair"
+    manifest = _manifest(payload)
+    offline = _offline_package(tmp_path / "offline", manifest, payload)
+    core = tmp_path / "core with spaces"
+    _write_manifest(core, manifest)
+    installed = core / "Runtime" / "tools" / "test-component"
+    installed.mkdir(parents=True)
+    (installed / "payload.bin").write_bytes(b"bad")
+    environment = os.environ.copy()
+    environment["GAUSSIANOS_DISTRIBUTION_ROOT"] = str(core)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "apps.desktop",
+            "--runtime-repair",
+            "test-component",
+            "--runtime-repair-source",
+            str(offline),
+        ],
+        cwd=Path(__file__).parents[2],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert (installed / "payload.bin").read_bytes() == payload
+    assert "Repaired and verified" in (
+        core / "Logs" / "runtime-operation-report.txt"
+    ).read_text(encoding="utf-8")

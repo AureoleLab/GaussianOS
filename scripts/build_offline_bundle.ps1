@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory)][string]$RuntimeSource,
     [string]$RuntimeManifestTemplate = (Join-Path $PSScriptRoot "..\dist\runtime-manifest.json"),
     [string]$SevenZip = (Join-Path $PSScriptRoot "..\.gaussian-factory\tools\7zip\7zr.exe"),
+    [switch]$Resume,
+    [string[]]$CompletedComponentPath = @(),
     [switch]$SkipArchive
 )
 $ErrorActionPreference = 'Stop'
@@ -19,7 +21,7 @@ if ((Split-Path $source -Leaf).Equals('runtime', [StringComparison]::OrdinalIgno
     (Test-Path -LiteralPath (Join-Path $source 'runtime'))) {
     throw "Runtime source contains forbidden runtime/runtime nesting: $source"
 }
-if (Test-Path -LiteralPath $buildRoot) {
+if (-not $Resume -and (Test-Path -LiteralPath $buildRoot)) {
     $resolvedBuild = [IO.Path]::GetFullPath($buildRoot)
     $allowedBuild = [IO.Path]::GetFullPath((Join-Path $root 'build'))
     if (-not $resolvedBuild.StartsWith($allowedBuild, [StringComparison]::OrdinalIgnoreCase)) {
@@ -27,7 +29,7 @@ if (Test-Path -LiteralPath $buildRoot) {
     }
     Remove-Item -LiteralPath $buildRoot -Recurse -Force
 }
-if (Test-Path -LiteralPath $package) {
+if (-not $Resume -and (Test-Path -LiteralPath $package)) {
     $resolvedPackage = [IO.Path]::GetFullPath($package)
     if (-not $resolvedPackage.StartsWith($output, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to replace unexpected package path: $resolvedPackage"
@@ -77,6 +79,13 @@ $directComponents = @(
     'downloads\dinov2-7764ea0'
 )
 foreach ($component in $directComponents) {
+    if ($Resume -and $component -in $CompletedComponentPath) {
+        if (-not (Test-Path -LiteralPath (Join-Path $runtime $component))) {
+            throw "Completed component path is not present: $component"
+        }
+        Write-Host "Resume: retaining completed component $component"
+        continue
+    }
     Copy-Tree (Join-Path $source $component) (Join-Path $runtime $component)
 }
 $sourceComponents = @(
@@ -85,6 +94,13 @@ $sourceComponents = @(
     'sources\dinov2-7764ea0'
 )
 foreach ($component in $sourceComponents) {
+    if ($Resume -and $component -in $CompletedComponentPath) {
+        if (-not (Test-Path -LiteralPath (Join-Path $runtime $component))) {
+            throw "Completed component path is not present: $component"
+        }
+        Write-Host "Resume: retaining completed component $component"
+        continue
+    }
     Copy-Tree `
         (Join-Path $source $component) `
         (Join-Path $runtime $component) `
@@ -148,7 +164,7 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Portable Core build failed.'
 }
 
-$archive = Join-Path $output 'GaussianOS-Offline-Runtime-win-x64.zip'
+$archive = Join-Path $output 'GaussianOS-Offline-Runtime-win-x64.7z'
 if (-not $SkipArchive) {
     $sevenZipCommand = if (Test-Path -LiteralPath $SevenZip) {
         (Resolve-Path $SevenZip).Path
@@ -156,21 +172,17 @@ if (-not $SkipArchive) {
         (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source
     }
     Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-    if ($sevenZipCommand) {
-        Push-Location $output
-        try {
-            & $sevenZipCommand a -tzip -mx=5 -mmt=on $archive (Split-Path $package -Leaf) | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-                throw '7-Zip Offline Runtime compression failed.'
-            }
-        } finally {
-            Pop-Location
+    if (-not $sevenZipCommand) {
+        throw '7z.exe or the approved standalone 7zr.exe is required for the Offline Runtime.'
+    }
+    Push-Location $output
+    try {
+        & $sevenZipCommand a -t7z -mx=7 -mmt=on $archive (Split-Path $package -Leaf) | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw '7-Zip Offline Runtime compression failed.'
         }
-    } else {
-        Compress-Archive `
-            -LiteralPath $package `
-            -DestinationPath $archive `
-            -CompressionLevel Optimal
+    } finally {
+        Pop-Location
     }
 }
 

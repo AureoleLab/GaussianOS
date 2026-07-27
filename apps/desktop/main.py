@@ -192,6 +192,12 @@ def main() -> int:
         manifest = load_manifest()
         lines: list[str] = []
         try:
+            def progress(name: str, done: int, total: int) -> None:
+                current = lines + [f"Downloading {name}: {done}/{total} bytes"]
+                operation_report.write_text(
+                    "\n".join(current) + "\n", encoding="utf-8"
+                )
+
             if args.runtime_list:
                 for component in manifest["components"]:
                     mode = (
@@ -214,9 +220,6 @@ def main() -> int:
                     if component["source"].get("url")
                 )
             for component_id in dict.fromkeys(selected):
-                def progress(name: str, done: int, total: int) -> None:
-                    current = lines + [f"Downloading {name}: {done}/{total} bytes"]
-                    operation_report.write_text("\n".join(current) + "\n", encoding="utf-8")
                 target = install(component_id, progress)
                 lines.append(
                     f"Installed and verified: {component_id} -> {target}"
