@@ -250,7 +250,10 @@ def test_repair_only_cli_has_shared_progress_callback(tmp_path: Path) -> None:
         check=False,
     )
 
-    assert completed.returncode == 0, completed.stderr
+    # The repair operation succeeds before the CLI returns the aggregate doctor
+    # status. A CPU-only Windows runner correctly reports GPU unavailable (4),
+    # while a GPU-capable runner or non-Windows host returns 0.
+    assert completed.returncode in {0, 4}, completed.stderr
     assert (installed / "payload.bin").read_bytes() == payload
     assert "Repaired and verified" in (
         core / "Logs" / "runtime-operation-report.txt"
