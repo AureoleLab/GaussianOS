@@ -101,8 +101,12 @@ class RuntimePaths:
         # A frozen portable build keeps every mutable dependency beside the
         # executable.  Source/developer runs preserve the historic local
         # location.  This must not fall back to user-profile caches.
-        portable_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None
-        factory = (portable_root / "runtime") if portable_root else (ROOT / ".gaussian-factory")
+        if getattr(sys, "frozen", False):
+            from .portable import layout_paths
+
+            factory = layout_paths().runtime
+        else:
+            factory = ROOT / ".gaussian-factory"
         bundled_ffmpeg = factory / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
         ffmpeg = str(bundled_ffmpeg) if bundled_ffmpeg.is_file() else (shutil.which("ffmpeg") or "ffmpeg")
         map_env = factory / "envs" / "mapanything-1.1.2"

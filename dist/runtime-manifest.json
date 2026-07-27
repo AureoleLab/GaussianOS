@@ -1,61 +1,335 @@
 {
-  "schema_version": "gaussianos-runtime-manifest/v2",
-  "platform": "windows-x86_64",
-  "runtime_root": "runtime",
-  "minimum_vram_mib": 8192,
-  "assets": [
-    {
-      "id": "ffmpeg-8.1.2-lgpl",
-      "version": "n8.1.2-29-g703dcc25b9",
-      "target": "runtime/.downloads/ffmpeg-n8.1.2-29-g703dcc25b9-win64-lgpl-shared-8.1.zip",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-21-13-38/ffmpeg-n8.1.2-29-g703dcc25b9-win64-lgpl-shared-8.1.zip",
-      "sha256": "50764b52d38cb0baf8af938c0e4ca886d2c6753b520b2c319b532ed5c17e7cbf",
-      "license": "LGPL-2.1-or-later",
-      "archive": "zip",
-      "extract_to": "runtime/tools/ffmpeg",
-      "strip_components": 1
-    },
-    {
-      "id": "colmap-3.13.0-cuda",
-      "version": "3.13.0",
-      "target": "runtime/.downloads/colmap-x64-windows-cuda-3.13.0.zip",
-      "url": "https://github.com/colmap/colmap/releases/download/3.13.0/colmap-x64-windows-cuda.zip",
-      "sha256": "60f77bd8e9823e6d2b39082ee665f69c91900011d5321fc54a4dfebe3de110b7",
-      "license": "BSD-3-Clause",
-      "archive": "zip",
-      "extract_to": "runtime/tools/colmap/3.13.0",
-      "strip_components": 0
-    },
-    {
-      "id": "mapanything-apache",
-      "version": "00f9c245bbcb60522d1ed7f9e9d88462c6e3f38a",
-      "target": "runtime/downloads/map-anything-apache-00f9c245/model.safetensors",
-      "url": null,
-      "sha256": "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201",
-      "license": "Apache-2.0"
-    },
-    {
-      "id": "dinov2-vitg14",
-      "version": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
-      "target": "runtime/downloads/dinov2-7764ea0/dinov2_vitg14_pretrain.pth",
-      "url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitg14/dinov2_vitg14_pretrain.pth",
-      "sha256": "baf8467e50af277596bbbafa06887c177ee899ab46033649c383577d7e9309d3",
-      "license": "Apache-2.0"
-    }
+  "schema_version": "gaussianos-runtime-manifest/v3",
+  "gaussianos_version": "0.1.0-alpha",
+  "compatible_gaussianos_versions": [
+    "0.1.0-alpha"
   ],
-  "checks": [
-    {"id": "ffmpeg", "path": "runtime/tools/ffmpeg/bin/ffmpeg.exe", "type": "file"},
-    {"id": "ffprobe", "path": "runtime/tools/ffmpeg/bin/ffprobe.exe", "type": "file"},
-    {"id": "colmap", "path": "runtime/tools/colmap/3.13.0/bin/colmap.exe", "type": "file", "sha256": "74470eec4cd484b1875fed83e7cefa407e35e93ea05eb294f0bed5a34d7e4e1a"},
-    {"id": "portable-git", "path": "runtime/tools/git/cmd/git.exe", "type": "file"},
-    {"id": "gsplat-python", "path": "runtime/envs/gsplat-1.5.3/python.exe", "type": "file"},
-    {"id": "gsplat-native", "path": "runtime/envs/gsplat-1.5.3/Lib/site-packages/gsplat/csrc.pyd", "type": "file", "sha256": "846115e6db8b4862d4f050b4bc9eec45b111de8946529352bb5af5272c0e53bf"},
-    {"id": "mapanything-python", "path": "runtime/envs/mapanything-1.1.2/python.exe", "type": "file"},
-    {"id": "gsplat-source", "path": "runtime/sources/gsplat-v1.5.3", "type": "directory"},
-    {"id": "mapanything-source", "path": "runtime/sources/map-anything-v1.1.2", "type": "directory"},
-    {"id": "dinov2-source", "path": "runtime/sources/dinov2-7764ea0", "type": "directory"},
-    {"id": "mapanything-checkpoint", "path": "runtime/downloads/map-anything-apache-00f9c245/model.safetensors", "type": "file", "sha256": "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201"},
-    {"id": "mapanything-config", "path": "runtime/downloads/map-anything-apache-00f9c245/config.json", "type": "file", "sha256": "65701d09d99ed37a21d295f0d138978b3d584ab3bccdbcb4a2853da212b676c5"},
-    {"id": "dinov2-checkpoint", "path": "runtime/downloads/dinov2-7764ea0/dinov2_vitg14_pretrain.pth", "type": "file", "sha256": "baf8467e50af277596bbbafa06887c177ee899ab46033649c383577d7e9309d3"}
+  "platform": {
+    "os": "windows",
+    "architecture": "x86_64"
+  },
+  "runtime_root": "Runtime",
+  "minimum_vram_mib": 8192,
+  "components": [
+    {
+      "component_id": "ffmpeg",
+      "version": "n8.1.2-29-g703dcc25b9",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "tools/ffmpeg",
+      "installed_size_bytes": 175926890,
+      "tree_sha256": "f60268a5f88c4c4748d848b8877d69a47b7ff6c557a3aaeaf314d9e2f73392b8",
+      "dependencies": [],
+      "required": true,
+      "source": {
+        "kind": "download",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-21-13-38/ffmpeg-n8.1.2-29-g703dcc25b9-win64-lgpl-shared-8.1.zip",
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64",
+        "artifact": {
+          "filename": "ffmpeg-n8.1.2-29-g703dcc25b9-win64-lgpl-shared-8.1.zip",
+          "size_bytes": 70510808,
+          "sha256": "50764b52d38cb0baf8af938c0e4ca886d2c6753b520b2c319b532ed5c17e7cbf",
+          "archive": "zip",
+          "strip_components": 1
+        }
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "bin/ffmpeg.exe",
+          "type": "file",
+          "size_bytes": 542208,
+          "sha256": "02e08de9538cfa13edd8e4fd81f897c2308594dcbeb22fe3a7ad6e1a5937fa2a"
+        },
+        {
+          "path": "bin/ffprobe.exe",
+          "type": "file",
+          "size_bytes": 227840,
+          "sha256": "2cc6c3d9c49028355e030b46208ac0e630a2a7a84381659d935183b1ea205e47"
+        }
+      ]
+    },
+    {
+      "component_id": "colmap",
+      "version": "3.13.0-cuda",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "tools/colmap/3.13.0",
+      "installed_size_bytes": 417876187,
+      "tree_sha256": "1980ee8b6e93043adb4967322e718b7b7ac640b3382e67db70324b026e09c83f",
+      "dependencies": [],
+      "required": true,
+      "source": {
+        "kind": "download",
+        "url": "https://github.com/colmap/colmap/releases/download/3.13.0/colmap-x64-windows-cuda.zip",
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64",
+        "artifact": {
+          "filename": "colmap-x64-windows-cuda-3.13.0.zip",
+          "size_bytes": 258390514,
+          "sha256": "60f77bd8e9823e6d2b39082ee665f69c91900011d5321fc54a4dfebe3de110b7",
+          "archive": "zip",
+          "strip_components": 0
+        }
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "bin/colmap.exe",
+          "type": "file",
+          "size_bytes": 70828032,
+          "sha256": "74470eec4cd484b1875fed83e7cefa407e35e93ea05eb294f0bed5a34d7e4e1a"
+        }
+      ]
+    },
+    {
+      "component_id": "portable-git",
+      "version": "2.51.0.windows.1",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "tools/git",
+      "installed_size_bytes": 428709206,
+      "tree_sha256": "a3856962a64f32602d9d9988541f326e434411f83aaf68ed3fae7425c4f9320b",
+      "dependencies": [],
+      "required": true,
+      "source": {
+        "kind": "offline",
+        "url": null,
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64"
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "cmd/git.exe",
+          "type": "file",
+          "size_bytes": 46480,
+          "sha256": "54194a1af7cfb6730448ce14b8f2c1dddd9f950b7f995dc351c1ed16eb179249"
+        }
+      ]
+    },
+    {
+      "component_id": "gsplat-source",
+      "version": "1.5.3",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "sources/gsplat-v1.5.3",
+      "installed_size_bytes": 130807317,
+      "tree_sha256": "677994d95641a62600de62f1225de2f8a0968942af4717b97faa1b1a74d8101a",
+      "dependencies": [],
+      "required": true,
+      "source": {
+        "kind": "offline",
+        "url": null,
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64"
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "setup.py",
+          "type": "file",
+          "size_bytes": 4745,
+          "sha256": "ca6d53249f3812c002bbad3729e1ee66970729d5267b8840bcdab10ab5981f90"
+        }
+      ]
+    },
+    {
+      "component_id": "gsplat-environment",
+      "version": "python-3.10-gsplat-1.5.3",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "envs/gsplat-1.5.3",
+      "installed_size_bytes": 3230629178,
+      "tree_sha256": "ffc1a3f9a95db0468723f0d9126847eb9bb34e1efccfac971b2ae1fbd97440bb",
+      "dependencies": [
+        "gsplat-source"
+      ],
+      "required": true,
+      "source": {
+        "kind": "offline",
+        "url": null,
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64"
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "python.exe",
+          "type": "file",
+          "size_bytes": 91648,
+          "sha256": "e2585ff9dc0f569eedf692d929c5661ba1e980b8513535bb6bbcb464266d90e7"
+        },
+        {
+          "path": "Lib/site-packages/gsplat/csrc.pyd",
+          "type": "file",
+          "size_bytes": 17639424,
+          "sha256": "846115e6db8b4862d4f050b4bc9eec45b111de8946529352bb5af5272c0e53bf"
+        }
+      ]
+    },
+    {
+      "component_id": "mapanything-source",
+      "version": "1.1.2",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "sources/map-anything-v1.1.2",
+      "installed_size_bytes": 17143627,
+      "tree_sha256": "32659a54a48ed75ea9b42e2c01daa89d59cc6d4e6ea6b09e1d862d2e6d995eb9",
+      "dependencies": [],
+      "required": true,
+      "source": {
+        "kind": "offline",
+        "url": null,
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64"
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "mapanything/__init__.py",
+          "type": "file",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "component_id": "mapanything-environment",
+      "version": "python-3.12-mapanything-1.1.2",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "envs/mapanything-1.1.2",
+      "installed_size_bytes": 3992468059,
+      "tree_sha256": "daa424f905ddbf882e96b4cf67487b592e943d47c3e37340d82fe0fa0dbfb19e",
+      "dependencies": [
+        "mapanything-source"
+      ],
+      "required": true,
+      "source": {
+        "kind": "offline",
+        "url": null,
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64"
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "python.exe",
+          "type": "file",
+          "size_bytes": 91648,
+          "sha256": "88b9e780cfdc38597c7f53e20f7165262befa28d9a5e9470360d349e172ecf37"
+        }
+      ]
+    },
+    {
+      "component_id": "dinov2-source",
+      "version": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "sources/dinov2-7764ea0",
+      "installed_size_bytes": 6671143,
+      "tree_sha256": "0dd84deca6fb81854c3970d9fc1d2d5bcb005d765a9077a4fe260823adee23fe",
+      "dependencies": [],
+      "required": true,
+      "source": {
+        "kind": "offline",
+        "url": null,
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64"
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "dinov2/__init__.py",
+          "type": "file",
+          "size_bytes": 224,
+          "sha256": "1e23e03ffdaf2605636f73e550a6619359ebae271f488437bd6ef068b75c114f"
+        }
+      ]
+    },
+    {
+      "component_id": "mapanything-model",
+      "version": "00f9c245bbcb60522d1ed7f9e9d88462c6e3f38a",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "downloads/map-anything-apache-00f9c245",
+      "installed_size_bytes": 4914068684,
+      "tree_sha256": "4e68b7bd395d321d22e78b2c56a95dcb936c3bdcd48837ae0bce2269e5d6a369",
+      "dependencies": [
+        "mapanything-source",
+        "mapanything-environment",
+        "dinov2-source"
+      ],
+      "required": true,
+      "source": {
+        "kind": "offline",
+        "url": null,
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64"
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "model.safetensors",
+          "type": "file",
+          "size_bytes": 4914062480,
+          "sha256": "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201"
+        },
+        {
+          "path": "config.json",
+          "type": "file",
+          "size_bytes": 5776,
+          "sha256": "65701d09d99ed37a21d295f0d138978b3d584ab3bccdbcb4a2853da212b676c5"
+        }
+      ]
+    },
+    {
+      "component_id": "dinov2-model",
+      "version": "7764ea0f912e53c92e82eb78a2a1631e92725fc8",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "downloads/dinov2-7764ea0",
+      "installed_size_bytes": 4546108579,
+      "tree_sha256": "7f0153da9c173328869b2e90360b5de01537b77dbb6197358931d2020456b2c5",
+      "dependencies": [
+        "dinov2-source",
+        "mapanything-environment"
+      ],
+      "required": true,
+      "source": {
+        "kind": "download",
+        "url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitg14/dinov2_vitg14_pretrain.pth",
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64",
+        "artifact": {
+          "filename": "dinov2_vitg14_pretrain.pth",
+          "size_bytes": 4546108579,
+          "sha256": "baf8467e50af277596bbbafa06887c177ee899ab46033649c383577d7e9309d3",
+          "archive": "file",
+          "install_as": "dinov2_vitg14_pretrain.pth"
+        }
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "dinov2_vitg14_pretrain.pth",
+          "type": "file",
+          "size_bytes": 4546108579,
+          "sha256": "baf8467e50af277596bbbafa06887c177ee899ab46033649c383577d7e9309d3"
+        }
+      ]
+    }
   ]
 }

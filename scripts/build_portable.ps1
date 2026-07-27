@@ -1,88 +1,141 @@
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = (Join-Path $PSScriptRoot "..\release"),
+    [string]$RuntimeManifest = (Join-Path $PSScriptRoot "..\dist\runtime-manifest.json"),
     [switch]$SkipArchive
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$stage = Join-Path $root 'build\portable-core'
-$dist = Join-Path $stage 'GaussianOS'
-Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $stage, $OutputDirectory | Out-Null
+$output = [IO.Path]::GetFullPath($OutputDirectory)
+$manifestSource = (Resolve-Path $RuntimeManifest).Path
+$buildRoot = Join-Path $root 'build\distribution-optimization\core'
+$pyinstallerDist = Join-Path $buildRoot 'pyinstaller-dist'
+$pyinstallerWork = Join-Path $buildRoot 'pyinstaller-work'
+$specRoot = Join-Path $buildRoot 'spec'
+$package = Join-Path $output 'GaussianOS-Portable-Core-win-x64'
+$application = Join-Path $package 'Application'
 
-# onedir avoids onefile's startup extraction and keeps mutable runtime local.
+if (Test-Path -LiteralPath $buildRoot) {
+    $resolvedBuild = [IO.Path]::GetFullPath($buildRoot)
+    $allowedBuild = [IO.Path]::GetFullPath((Join-Path $root 'build'))
+    if (-not $resolvedBuild.StartsWith($allowedBuild, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to clean unexpected build path: $resolvedBuild"
+    }
+    Remove-Item -LiteralPath $buildRoot -Recurse -Force
+}
+if (Test-Path -LiteralPath $package) {
+    $resolvedPackage = [IO.Path]::GetFullPath($package)
+    if (-not $resolvedPackage.StartsWith($output, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to replace unexpected package path: $resolvedPackage"
+    }
+    Remove-Item -LiteralPath $package -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path `
+    $buildRoot, $pyinstallerDist, $pyinstallerWork, $specRoot, $package | Out-Null
+
 Push-Location $root
 try {
-    & uv run --with 'pyinstaller==6.17.0' pyinstaller --noconfirm --clean --onedir --name GaussianOS --windowed `
-        --hidden-import PySide6.QtWebEngineCore --hidden-import PySide6.QtWebEngineQuick `
+    & uv run --with 'pyinstaller==6.17.0' pyinstaller `
+        --noconfirm `
+        --clean `
+        --onedir `
+        --name GaussianOS `
+        --windowed `
+        --distpath $pyinstallerDist `
+        --workpath $pyinstallerWork `
+        --specpath $specRoot `
+        --hidden-import PySide6.QtWebEngineCore `
+        --hidden-import PySide6.QtWebEngineQuick `
         --add-data 'apps/desktop/qml;apps/desktop/qml' `
         --add-data 'apps/desktop/viewer_web;apps/desktop/viewer_web' `
-        --add-data 'configs;configs' --add-data 'workers;workers' --add-data 'packages;packages' `
+        --add-data 'configs;configs' `
+        --add-data 'workers;workers' `
+        --add-data 'packages;packages' `
         apps/desktop/__main__.py
-    if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed.' }
-} finally { Pop-Location }
-Move-Item -LiteralPath (Join-Path $root 'dist\GaussianOS') -Destination $stage
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed ($LASTEXITCODE)."
+    }
+} finally {
+    Pop-Location
+}
+Move-Item -LiteralPath (Join-Path $pyinstallerDist 'GaussianOS') -Destination $application
 
-# Do not distribute research-only workers, test code, caches, PDBs, Qt examples,
-# local project state, model checkpoints, or build artefacts.
-$exclude = @('recon_gluemap','recon_vggt_omega','train_improvedgs','__pycache__','tests','benchmarks','*.pdb','*.pyc','*.pyo','*.log','*.tmp','*.ply','*.scene-bundle','*.safetensors','*.pt','*.pth','*.ckpt')
-foreach ($pattern in $exclude) { Get-ChildItem -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue -Filter $pattern | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
-Copy-Item (Join-Path $root 'dist\runtime-manifest.json') (Join-Path $dist 'runtime-manifest.json')
-Copy-Item (Join-Path $root 'LICENSE'), (Join-Path $root 'THIRD_PARTY_NOTICES.md'), (Join-Path $root 'README.md') -Destination $dist
-New-Item -ItemType Directory -Force -Path (Join-Path $dist 'runtime') | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $dist 'data') | Out-Null
-@'
-@echo off
-setlocal
-cd /d "%~dp0"
-GaussianOS.exe
-'@ | Set-Content -LiteralPath (Join-Path $dist 'GaussianOS.bat') -Encoding ascii
-Copy-Item (Join-Path $dist 'GaussianOS.bat') (Join-Path $dist 'Start_GaussianOS.bat')
-@'
-param([switch]$AllowMissingRuntime)
-$process = Start-Process -FilePath (Join-Path $PSScriptRoot 'GaussianOS.exe') -ArgumentList '--doctor' -Wait -PassThru
-$report = Join-Path $PSScriptRoot 'doctor-report.txt'
-if (Test-Path $report) { Get-Content $report }
-if ($process.ExitCode -ne 0 -and -not $AllowMissingRuntime) { exit $process.ExitCode }
-'@ | Set-Content -LiteralPath (Join-Path $dist 'Doctor.ps1') -Encoding utf8
-@'
-param([switch]$List, [switch]$All, [string[]]$Asset)
-$arguments = @()
-if ($List) { $arguments += '--runtime-list' }
-if ($All) { $arguments += '--runtime-install-all' }
-foreach ($item in $Asset) { $arguments += '--runtime-install'; $arguments += $item }
-if (-not $arguments.Count) { $arguments += '--runtime-list' }
-$process = Start-Process -FilePath (Join-Path $PSScriptRoot 'GaussianOS.exe') -ArgumentList $arguments -Wait -PassThru
-Get-Content (Join-Path $PSScriptRoot 'runtime-operation-report.txt') -ErrorAction SilentlyContinue
-exit $process.ExitCode
-'@ | Set-Content -LiteralPath (Join-Path $dist 'Install_Runtime.ps1') -Encoding utf8
-@'
-param([Parameter(Mandatory)][string]$Source)
-$process = Start-Process -FilePath (Join-Path $PSScriptRoot 'GaussianOS.exe') -ArgumentList @('--runtime-import', $Source) -Wait -PassThru
-Get-Content (Join-Path $PSScriptRoot 'runtime-operation-report.txt') -ErrorAction SilentlyContinue
-exit $process.ExitCode
-'@ | Set-Content -LiteralPath (Join-Path $dist 'Import_Offline_Runtime.ps1') -Encoding utf8
-@'
-GaussianOS Portable
+$pruneReport = Join-Path $buildRoot 'core-prune-report.json'
+& uv run python scripts/package_policy.py prune `
+    --application $application `
+    --report $pruneReport
+if ($LASTEXITCODE -ne 0) {
+    throw 'Audited Core pruning failed.'
+}
 
-Run Start_GaussianOS.bat. All runtime, caches, projects, temporary files and
-artifacts stay under this directory. Run Doctor.ps1 from PowerShell to verify
-the NVIDIA driver and every production runtime component.
+Copy-Item -LiteralPath $manifestSource -Destination (Join-Path $package 'runtime-manifest.json')
+Copy-Item -LiteralPath `
+    (Join-Path $root 'LICENSE'), `
+    (Join-Path $root 'THIRD_PARTY_NOTICES.md'), `
+    (Join-Path $root 'packaging\VERSION'), `
+    (Join-Path $root 'packaging\CHANGELOG.md'), `
+    (Join-Path $root 'packaging\QUICKSTART.md'), `
+    (Join-Path $root 'packaging\TROUBLESHOOTING.md'), `
+    (Join-Path $root 'packaging\DIRECTORY_LAYOUT.md'), `
+    (Join-Path $root 'packaging\Start_GaussianOS.bat'), `
+    (Join-Path $root 'packaging\Start_GaussianOS_Classic.bat'), `
+    (Join-Path $root 'packaging\Doctor.ps1'), `
+    (Join-Path $root 'packaging\Runtime_Manager.ps1') `
+    -Destination $package
+Copy-Item -LiteralPath $pruneReport -Destination (Join-Path $package 'prune-report.json')
 
-Portable Core omits the Worker runtime and model weights. Full Offline includes
-the approved production runtime and operates without network access. Core users
-can run Install_Runtime.ps1 -List / -All for manifest-locked downloads, or run
-Import_Offline_Runtime.ps1 -Source <Full-Offline-folder> to import a complete,
-verified runtime without using a developer environment or user cache.
-'@ | Set-Content -LiteralPath (Join-Path $dist 'README_PORTABLE.txt') -Encoding utf8
+foreach ($directory in 'Runtime', 'Settings', 'Cache', 'Logs', 'Projects', 'Exports') {
+    $path = Join-Path $package $directory
+    New-Item -ItemType Directory -Force -Path $path | Out-Null
+    New-Item -ItemType File -Force -Path (Join-Path $path '.gaussianos-directory') | Out-Null
+}
 
-$packageDirectory = Join-Path $OutputDirectory 'GaussianOS-Portable-Core-win-x64'
-if (Test-Path -LiteralPath $packageDirectory) { Remove-Item -LiteralPath $packageDirectory -Recurse -Force }
-Copy-Item -LiteralPath $dist -Destination $packageDirectory -Recurse -Force
-$before = (Get-ChildItem $packageDirectory -Recurse -File | Measure-Object Length -Sum).Sum
-$archive = Join-Path $OutputDirectory 'GaussianOS-Portable-Core-win-x64.zip'
-if (-not $SkipArchive) { Remove-Item $archive -Force -ErrorAction SilentlyContinue; Compress-Archive -Path $packageDirectory -DestinationPath $archive -CompressionLevel Optimal }
-$after = if (Test-Path $archive) { (Get-Item $archive).Length } else { 0 }
-$manifest = [ordered]@{ archive = $archive; unpacked_bytes = $before; compressed_bytes = $after; sha256 = if ($after) { (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower() } else { $null }; files = @(Get-ChildItem $packageDirectory -Recurse -File | ForEach-Object { $_.FullName.Substring($packageDirectory.Length + 1) }) }
-$manifest | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $OutputDirectory 'GaussianOS-Portable-Core-win-x64.manifest.json') -Encoding utf8
-Write-Host "Portable Core unpacked: $before bytes; archive: $after bytes"
+$auditReport = Join-Path $buildRoot 'core-package-audit.json'
+& uv run python scripts/package_policy.py audit-core `
+    --package $package `
+    --report $auditReport
+if ($LASTEXITCODE -ne 0) {
+    throw 'Portable Core content gate failed.'
+}
+Copy-Item -LiteralPath $auditReport -Destination (Join-Path $package 'package-audit.json')
+
+& uv run python scripts/package_policy.py build-manifest `
+    --package $package `
+    --product 'GaussianOS Portable Core' `
+    --feature 'ModernUI and ClassicUI' `
+    --feature 'Qt QML and WebEngine Viewer' `
+    --feature 'Core-only project management and export access' `
+    --feature 'Runtime detect/install/offline-import/verify/repair' `
+    --prune-report $pruneReport
+if ($LASTEXITCODE -ne 0) {
+    throw 'Portable Core build manifest generation failed.'
+}
+
+$archive = Join-Path $output 'GaussianOS-Portable-Core-win-x64.zip'
+if (-not $SkipArchive) {
+    Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+    Compress-Archive `
+        -LiteralPath $package `
+        -DestinationPath $archive `
+        -CompressionLevel Optimal
+}
+$files = @(Get-ChildItem -LiteralPath $package -Recurse -File)
+$summary = [ordered]@{
+    product = 'GaussianOS Portable Core'
+    package_directory = $package
+    archive = if (Test-Path -LiteralPath $archive) { $archive } else { $null }
+    file_count = $files.Count
+    unpacked_bytes = [int64](($files | Measure-Object Length -Sum).Sum)
+    compressed_bytes = if (Test-Path -LiteralPath $archive) {
+        (Get-Item -LiteralPath $archive).Length
+    } else { 0 }
+    sha256 = if (Test-Path -LiteralPath $archive) {
+        (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLower()
+    } else { $null }
+}
+$summary | ConvertTo-Json -Depth 5 |
+    Set-Content -LiteralPath (Join-Path $output 'GaussianOS-Portable-Core-win-x64.manifest.json') -Encoding utf8
+Write-Host (
+    "Portable Core: {0} files; {1} unpacked bytes; {2} archive bytes" -f `
+        $summary.file_count, $summary.unpacked_bytes, $summary.compressed_bytes
+)

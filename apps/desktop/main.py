@@ -92,13 +92,32 @@ def _qt():
 
 
 def main() -> int:
-    from .portable import doctor, import_offline, install, manifest_path, prepare_environment
+    from .portable import (
+        doctor,
+        doctor_report,
+        import_offline,
+        install,
+        load_manifest,
+        prepare_environment,
+        repair,
+    )
 
-    portable_data = prepare_environment()
+    portable_layout = prepare_environment()
     parser = argparse.ArgumentParser(description="Gaussian Factory P2 desktop GUI")
-    default_state = portable_data if getattr(sys, "frozen", False) else Path.home() / ".gaussian-factory"
-    parser.add_argument("--projects", type=Path, default=default_state / "projects")
-    parser.add_argument("--artifacts", type=Path, default=default_state / "artifact-store")
+    frozen = bool(getattr(sys, "frozen", False))
+    default_state = (
+        portable_layout.settings if frozen else Path.home() / ".gaussian-factory"
+    )
+    default_projects = (
+        portable_layout.projects if frozen else default_state / "projects"
+    )
+    default_artifacts = (
+        portable_layout.cache / "ArtifactStore"
+        if frozen
+        else default_state / "artifact-store"
+    )
+    parser.add_argument("--projects", type=Path, default=default_projects)
+    parser.add_argument("--artifacts", type=Path, default=default_artifacts)
     parser.add_argument(
         "--ui",
         choices=UI_CHOICES,
@@ -154,42 +173,92 @@ def main() -> int:
     parser.add_argument("--runtime-install", action="append", default=[], metavar="ASSET_ID", help="download and verify a locked runtime asset")
     parser.add_argument("--runtime-install-all", action="store_true", help="download every runtime asset that has an approved URL")
     parser.add_argument("--runtime-import", type=Path, help="import a verified Full Offline runtime or locked asset directory")
+    parser.add_argument("--runtime-repair", action="append", default=[], metavar="COMPONENT_ID", help="repair one locked Runtime component")
+    parser.add_argument("--runtime-repair-source", type=Path, help="approved Offline Runtime used by --runtime-repair")
+    parser.add_argument("--runtime-verify-full", action="store_true", help="hash every file in every Runtime component")
     parser.add_argument("--portable-smoke-video", type=Path, help="commit one analyzed video import without starting reconstruction")
     parser.add_argument("--portable-smoke-output", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    operation_report = Path(sys.executable).resolve().parent / "runtime-operation-report.txt"
-    if args.runtime_list or args.runtime_install or args.runtime_install_all or args.runtime_import:
-        manifest = json.loads(manifest_path().read_text(encoding="utf-8"))
+    operation_report = portable_layout.logs / "runtime-operation-report.txt"
+    if (
+        args.runtime_list
+        or args.runtime_install
+        or args.runtime_install_all
+        or args.runtime_import
+        or args.runtime_repair
+        or args.runtime_verify_full
+    ):
+        operation_report.parent.mkdir(parents=True, exist_ok=True)
+        manifest = load_manifest()
         lines: list[str] = []
         try:
             if args.runtime_list:
-                for asset in manifest["assets"]:
-                    mode = "download" if asset.get("url") else "offline import only"
-                    lines.append(f"{asset['id']} {asset['version']} [{mode}]")
+                for component in manifest["components"]:
+                    mode = (
+                        "download"
+                        if component["source"].get("url")
+                        else "offline import only"
+                    )
+                    requirement = (
+                        "required" if component["required"] else "optional"
+                    )
+                    lines.append(
+                        f"{component['component_id']} {component['version']} "
+                        f"[{requirement}; {mode}]"
+                    )
             selected = list(args.runtime_install)
             if args.runtime_install_all:
-                selected.extend(asset["id"] for asset in manifest["assets"] if asset.get("url"))
-            for asset_id in dict.fromkeys(selected):
+                selected.extend(
+                    component["component_id"]
+                    for component in manifest["components"]
+                    if component["source"].get("url")
+                )
+            for component_id in dict.fromkeys(selected):
                 def progress(name: str, done: int, total: int) -> None:
                     current = lines + [f"Downloading {name}: {done}/{total} bytes"]
                     operation_report.write_text("\n".join(current) + "\n", encoding="utf-8")
-                target = install(asset_id, progress)
-                lines.append(f"Installed and verified: {asset_id} -> {target}")
+                target = install(component_id, progress)
+                lines.append(
+                    f"Installed and verified: {component_id} -> {target}"
+                )
             if args.runtime_import:
                 imported = import_offline(args.runtime_import)
                 if not imported:
-                    raise RuntimeError("No manifest-locked runtime assets were found in the selected directory.")
+                    raise RuntimeError(
+                        "No manifest-locked Runtime components were found."
+                    )
                 lines.extend(f"Imported and verified: {path}" for path in imported)
-            remaining = doctor()
-            lines.append("Runtime doctor: " + ("OK" if not remaining else f"{len(remaining)} issue(s) remain"))
+            for component_id in dict.fromkeys(args.runtime_repair):
+                repaired = repair(
+                    component_id,
+                    args.runtime_repair_source,
+                    progress,
+                )
+                lines.append(
+                    f"Repaired and verified: {component_id} -> {repaired}"
+                )
+            report = doctor_report(full=args.runtime_verify_full)
+            lines.append(
+                "Runtime doctor: "
+                + (
+                    "OK"
+                    if report.exit_code == 0
+                    else f"{len(report.issues)} issue(s) remain"
+                )
+            )
+            if args.runtime_verify_full:
+                lines.append("Full Runtime tree verification completed.")
             operation_report.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return 0
+            return report.exit_code
         except Exception as exc:
             lines.append(f"ERROR: {exc}")
             operation_report.write_text("\n".join(lines) + "\n", encoding="utf-8")
             return 3
     if args.portable_smoke_video:
-        output = (args.portable_smoke_output or (portable_data / "acceptance-smoke")).resolve()
+        output = (
+            args.portable_smoke_output
+            or (portable_layout.cache / "AcceptanceSmoke")
+        ).resolve()
         report_path = output / "portable-smoke-report.txt"
         session: VideoImportSession | None = None
         try:
@@ -231,12 +300,35 @@ def main() -> int:
             if session is not None:
                 session.cancel()
     if args.doctor:
-        messages = doctor()
-        report = "GaussianOS runtime doctor: " + ("OK" if not messages else "\n- " + "\n- ".join(messages))
-        print(report)
-        if getattr(sys, "frozen", False):
-            (Path(sys.executable).resolve().parent / "doctor-report.txt").write_text(report + "\n", encoding="utf-8")
-        return 0 if not messages else 2
+        result = doctor_report(full=True)
+        report = (
+            "GaussianOS doctor\n"
+            f"Core: {result.core_status}\n"
+            f"Runtime: {result.runtime_status}\n"
+            f"GPU: {result.gpu_status}\n"
+            f"External tools: {result.external_tools_status}\n"
+            f"Project data: {result.project_data_status}\n"
+            + (
+                "Issues: none\n"
+                if not result.issues
+                else "Issues:\n"
+                + "\n".join(
+                    f"- [{issue.category}/{issue.code}] {issue.message}"
+                    for issue in result.issues
+                )
+                + "\n"
+            )
+        )
+        print(report, end="")
+        portable_layout.logs.mkdir(parents=True, exist_ok=True)
+        (portable_layout.logs / "doctor-report.txt").write_text(
+            report, encoding="utf-8"
+        )
+        (portable_layout.logs / "doctor-report.json").write_text(
+            json.dumps(result.payload(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return result.exit_code
     ui_settings = UiSettingsStore(
         args.acceptance_ui_settings or default_state / "ui-settings.json"
     )
@@ -245,7 +337,11 @@ def main() -> int:
         safe_ui=args.safe_ui,
         persisted=ui_settings.preferred_ui,
     )
-    ui_log_path = default_state / "logs" / "desktop-ui.log"
+    ui_log_path = (
+        portable_layout.logs / "desktop-ui.log"
+        if frozen
+        else default_state / "logs" / "desktop-ui.log"
+    )
 
     def record_ui(message: str) -> None:
         stamp = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -285,7 +381,7 @@ def main() -> int:
         "Montserrat-Bold.ttf",
     )
     font_roots = (
-        Path(sys.executable).resolve().parent / "fonts",
+        portable_layout.application / "fonts",
         Path.home() / "AppData" / "Local" / "Microsoft" / "Windows" / "Fonts",
         Path("C:/Windows/Fonts"),
     )
