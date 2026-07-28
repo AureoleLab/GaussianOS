@@ -16,6 +16,22 @@ $extract = Join-Path $scratch $firstLaunch
 $movedRoot = Join-Path $scratch (
     "$movedLabel Portable Core " + (($longPathLabel + '-') * 8)
 )
+function Move-DirectoryWithRetry(
+    [Parameter(Mandatory)][string]$Source,
+    [Parameter(Mandatory)][string]$Destination
+) {
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        try {
+            Move-Item -LiteralPath $Source -Destination $Destination -ErrorAction Stop
+            return
+        } catch {
+            if ($attempt -eq 10) {
+                throw
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
 New-Item -ItemType Directory -Force -Path $extract | Out-Null
 try {
     Expand-Archive -LiteralPath $archivePath -DestinationPath $extract
@@ -96,7 +112,7 @@ try {
     Set-Content -LiteralPath $runtimeSentinel -Value 'preserve' -Encoding utf8
     Set-Content -LiteralPath $exportSentinel -Value 'preserve' -Encoding utf8
 
-    Move-Item -LiteralPath $root -Destination $movedRoot
+    Move-DirectoryWithRetry -Source $root -Destination $movedRoot
     $root = $movedRoot
     $exe = Join-Path $root 'Application\GaussianOS.exe'
     $movedDoctor = Start-Process `
@@ -119,7 +135,9 @@ try {
     }
 
     $applicationBackup = Join-Path $scratch 'removed-Application'
-    Move-Item -LiteralPath (Join-Path $root 'Application') -Destination $applicationBackup
+    Move-DirectoryWithRetry `
+        -Source (Join-Path $root 'Application') `
+        -Destination $applicationBackup
     if (-not (Test-Path -LiteralPath (Join-Path $root 'Projects\keep-project\project.json'))) {
         throw 'Removing Application removed project data.'
     }

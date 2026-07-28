@@ -5,7 +5,13 @@
    `Start_GaussianOS_Classic.bat` for ClassicUI.
 3. A Core-only installation starts normally and reports that Runtime is not
    installed. Projects and exports remain available.
-4. For offline use, extract `GaussianOS-Offline-Runtime-win-x64.7z`, then run:
+4. For offline use, extract `GaussianOS-Offline-Runtime-win-x64.7z` next to
+   the Portable Core. Double-click the Offline Runtime package's
+   `Start_GaussianOS.bat`; it imports and verifies Runtime on first use, then
+   starts ModernUI. `Start_GaussianOS_Classic.bat` does the same for ClassicUI.
+   To install without starting the application, run `Install_Runtime.bat`.
+
+   The PowerShell equivalent from the Portable Core is:
 
    `Runtime_Manager.ps1 -Import "<offline-package-directory>"`
 

@@ -53,11 +53,11 @@ top-level contributors were:
 
 | Product | Before | After | Change |
 | --- | ---: | ---: | ---: |
-| Portable Core, unpacked | 753,819,903 | 668,718,338 | -85,101,565 (-11.29%) |
-| Portable Core archive | 393,491,676 | 267,266,941 | -126,224,735 (-32.08%) |
-| Runtime source vs. offline payload | 18,622,972,914 | 17,759,113,336 | -863,859,578 (-4.64%) |
+| Portable Core, unpacked | 753,819,903 | 668,718,843 | -85,101,060 (-11.29%) |
+| Portable Core archive | 393,491,676 | 267,266,836 | -126,224,840 (-32.08%) |
+| Runtime source vs. offline payload | 18,622,972,914 | 17,759,119,558 | -863,853,356 (-4.64%) |
 
-The final Core contains 3,101 files. The Offline Runtime contains 71,134 files.
+The final Core contains 3,101 files. The Offline Runtime contains 71,138 files.
 
 ## Safe optimization decisions
 
@@ -99,14 +99,20 @@ Core-only ModernUI and ClassicUI start without a Runtime. Doctor distinguishes
 Core, missing/incomplete/corrupt Runtime, GPU/CUDA, external tools and project
 data. Runtime operations do not write to project or export directories.
 
+The Offline Runtime root includes `Install_Runtime.bat`,
+`Start_GaussianOS.bat`, and `Start_GaussianOS_Classic.bat`. They locate a
+sibling or user-selected Portable Core, validate required manifest files,
+perform the verified offline import when needed, and launch the selected UI
+without embedding a duplicate Application in the Runtime package.
+
 ## Artifacts
 
 Release directory: `J:\GaussianOS-release-20260728`
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `GaussianOS-Portable-Core-win-x64.zip` | 267,266,941 | `03289252ed418210c2712560c6c077942f9aad1b17ff85a1de7e2850ad7fe0f5` |
-| `GaussianOS-Offline-Runtime-win-x64.7z` | 12,323,150,239 | `85d014e860bbd58d4948937557cdab5240e74720e2b4bc585b3d140921ce538c` |
+| `GaussianOS-Portable-Core-win-x64.zip` | 267,266,836 | `e46b099a47112279adc0303364dd330c9ee123449496dfe49aeecc290eb4662e` |
+| `GaussianOS-Offline-Runtime-win-x64.7z` | 12,323,186,221 | `32b9d8c4350ad22d17ffbd91e7c95ab15635b2f3096a0c7c9167e64d6c53edfd` |
 
 The directory also contains `SHA256SUMS.txt`, `runtime-manifest.json`,
 `build-manifest.json`, `VERSION`, `CHANGELOG.md`, `QUICKSTART.md`, and
@@ -122,7 +128,9 @@ Passed:
 - Core ZIP extraction outside the repository;
 - Core-only doctor (`Core: ok`, `Runtime: not_installed`);
 - packaged ModernUI, ClassicUI and WebEngine startup;
-- full Offline Runtime import and 71,134-file tree verification;
+- Offline Runtime `Start_GaussianOS.bat` launching the selected packaged Core
+  from a Chinese and spaced path;
+- full Offline Runtime import and 71,138-file tree verification;
 - deliberate same-size FFprobe corruption, precise component/file diagnosis,
   atomic repair, empty staging and a final all-`ok` doctor;
 - synthetic video generation with packaged FFmpeg, packaged video analysis,

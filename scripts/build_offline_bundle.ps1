@@ -128,6 +128,24 @@ Copy-Item -LiteralPath `
     (Join-Path $root 'THIRD_PARTY_NOTICES.md') `
     -Destination $package
 
+Copy-Item -LiteralPath `
+    (Join-Path $root 'packaging\offline\Install_Runtime.bat'), `
+    (Join-Path $root 'packaging\offline\Start_GaussianOS.bat'), `
+    (Join-Path $root 'packaging\offline\Start_GaussianOS_Classic.bat'), `
+    (Join-Path $root 'packaging\offline\Test_RuntimePresence.ps1') `
+    -Destination $package
+
+foreach ($launcher in @(
+    'Install_Runtime.bat',
+    'Start_GaussianOS.bat',
+    'Start_GaussianOS_Classic.bat',
+    'Test_RuntimePresence.ps1'
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $package $launcher) -PathType Leaf)) {
+        throw "Offline Runtime launcher is missing: $launcher"
+    }
+}
+
 & uv run python scripts/package_policy.py build-manifest `
     --package $package `
     --product 'GaussianOS Offline Runtime' `

@@ -74,3 +74,24 @@ def test_core_allowlist_denylist_and_runtime_nesting_gate(tmp_path: Path) -> Non
     (package / "Runtime" / "Runtime").mkdir(parents=True)
     with pytest.raises(RuntimeError, match="runtime/runtime"):
         audit_core(package)
+
+
+def test_offline_runtime_launchers_find_and_import_portable_core() -> None:
+    offline = Path(__file__).parents[2] / "packaging" / "offline"
+    install = (offline / "Install_Runtime.bat").read_text(encoding="utf-8")
+    modern = (offline / "Start_GaussianOS.bat").read_text(encoding="utf-8")
+    classic = (offline / "Start_GaussianOS_Classic.bat").read_text(
+        encoding="utf-8"
+    )
+    presence = (offline / "Test_RuntimePresence.ps1").read_text(encoding="utf-8")
+
+    assert "Runtime_Manager.ps1" in install
+    assert '-Import "%OFFLINE_ROOT%"' in install
+    assert "GaussianOS-Portable-Core-win-x64" in install
+    assert 'call "%OFFLINE_ROOT%\\Install_Runtime.bat"' in modern
+    assert 'call "%CORE_ROOT%\\Start_GaussianOS.bat"' in modern
+    assert 'call "%CORE_ROOT%\\Start_GaussianOS_Classic.bat"' in classic
+    assert all("%~dp0" in launcher for launcher in (install, modern, classic))
+    assert "runtime-manifest.json" in presence
+    assert "relative_install_path" in presence
+    assert "size_bytes" in presence
