@@ -92,6 +92,21 @@ def test_offline_runtime_launchers_find_and_import_portable_core() -> None:
     assert 'call "%CORE_ROOT%\\Start_GaussianOS.bat"' in modern
     assert 'call "%CORE_ROOT%\\Start_GaussianOS_Classic.bat"' in classic
     assert all("%~dp0" in launcher for launcher in (install, modern, classic))
+    assert all("Runtime-only package" in launcher for launcher in (install, modern, classic))
+    assert all("set /p" not in launcher.lower() for launcher in (install, modern, classic))
     assert "runtime-manifest.json" in presence
     assert "relative_install_path" in presence
     assert "size_bytes" in presence
+
+
+def test_full_offline_builder_keeps_one_application_and_runtime_root() -> None:
+    script = (
+        Path(__file__).parents[2] / "scripts" / "build_full_offline.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "GaussianOS-Full-Offline-win-x64" in script
+    assert "Application\\GaussianOS.exe" in script
+    assert "Runtime\\Runtime" in script
+    assert "manifests differ" in script
+    assert "doctor_report(full=True)" in script
+    assert "single-folder offline launch" in script

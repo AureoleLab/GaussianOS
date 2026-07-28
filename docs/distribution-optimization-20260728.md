@@ -157,3 +157,28 @@ gate because the isolated packaged full training-to-export run was not
 completed. Do not publish them as a formal release until that remaining clean
 environment check passes without changing algorithms, parameters, protocols or
 output semantics.
+
+## Full Offline follow-up
+
+A user extraction test showed that the Runtime-only archive could be mistaken
+for a standalone application. That archive intentionally has no
+`Application\GaussianOS.exe`, but its launcher previously waited for a Core
+path without stating this clearly.
+
+The follow-up adds a single-folder
+`GaussianOS-Full-Offline-win-x64.7z` containing one Application and one Runtime
+root. The Runtime-only launchers now auto-discover a sibling Core and otherwise
+fail with an explicit explanation and a pointer to the Full Offline product;
+they no longer present an unexplained empty path prompt.
+
+The Full Offline candidate was extracted and validated at
+`C:\GStest(del)\GaussianOS-Full-Offline-win-x64`. Complete doctor reported Core,
+Runtime, GPU, external tools, and project data as `ok`, with full Runtime
+verification and no issues. Actual packaged ModernUI and ClassicUI BAT launches
+both succeeded. The complete automated regression after this follow-up is 213
+passed and 2 unchanged opt-in external checks skipped (215 collected).
+
+This follow-up fixes installation and launch usability only. It does not change
+training algorithms, parameters, project protocols, Viewer behavior, or export
+semantics. The release decision above remains unchanged until the clean
+training-to-export gate is completed.

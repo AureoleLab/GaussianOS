@@ -25,10 +25,24 @@ def directory_summary(path: Path) -> tuple[int, int]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--full-directory",
+        type=Path,
+        help="validated Full Offline directory when it is staged outside output",
+    )
     args = parser.parse_args()
     output = args.output.resolve()
+    hash_cache: dict[Path, str] = {}
+
+    def cached_sha256(path: Path) -> str:
+        resolved = path.resolve()
+        if resolved not in hash_cache:
+            hash_cache[resolved] = sha256(resolved)
+        return hash_cache[resolved]
+
     core_archive = output / "GaussianOS-Portable-Core-win-x64.zip"
     runtime_archive = output / "GaussianOS-Offline-Runtime-win-x64.7z"
+    full_archive = output / "GaussianOS-Full-Offline-win-x64.7z"
     core_dir = output / "GaussianOS-Portable-Core-win-x64"
     runtime_dir = output / "GaussianOS-Offline-Runtime-win-x64"
     for required in (core_archive, runtime_archive, core_dir, runtime_dir):
@@ -50,7 +64,7 @@ def main() -> int:
             "file_count": core_files,
             "unpacked_size_bytes": core_unpacked,
             "compressed_size_bytes": core_archive.stat().st_size,
-            "sha256": sha256(core_archive),
+            "sha256": cached_sha256(core_archive),
             "features": [
                 "ModernUI",
                 "ClassicUI",
@@ -66,7 +80,7 @@ def main() -> int:
             "file_count": runtime_files,
             "unpacked_size_bytes": runtime_unpacked,
             "compressed_size_bytes": runtime_archive.stat().st_size,
-            "sha256": sha256(runtime_archive),
+            "sha256": cached_sha256(runtime_archive),
             "features": [
                 "FFmpeg",
                 "COLMAP CUDA",
@@ -77,6 +91,40 @@ def main() -> int:
             "verification": "passed: component critical hashes, full Runtime tree hashes, archive integrity",
         },
     ]
+    full_dir = (
+        args.full_directory.resolve()
+        if args.full_directory
+        else output / "GaussianOS-Full-Offline-win-x64"
+    )
+    if full_archive.exists() or full_dir.exists():
+        if not full_archive.is_file() or not full_dir.is_dir():
+            raise RuntimeError(
+                "Full Offline directory and archive must either both exist or both be absent"
+            )
+        full_manifest = full_dir / "runtime-manifest.json"
+        if full_manifest.read_bytes() != runtime_manifest.read_bytes():
+            raise RuntimeError("Full Offline and Offline Runtime manifests differ")
+        full_files, full_unpacked = directory_summary(full_dir)
+        products.append(
+            {
+                "product": "GaussianOS Full Offline",
+                "archive": full_archive.name,
+                "file_count": full_files,
+                "unpacked_size_bytes": full_unpacked,
+                "compressed_size_bytes": full_archive.stat().st_size,
+                "sha256": cached_sha256(full_archive),
+                "features": [
+                    "single-folder ModernUI and ClassicUI",
+                    "Qt/QML/WebEngine Viewer",
+                    "COLMAP, MapAnything and gsplat",
+                    "locked models, tools and training environments",
+                ],
+                "verification": (
+                    "passed: complete doctor, ModernUI/ClassicUI packaged launch, "
+                    "archive integrity"
+                ),
+            }
+        )
     payload = {
         "schema_version": "gaussianos-release-build-manifest/v1",
         "version": "0.1.0-alpha",
@@ -98,8 +146,10 @@ def main() -> int:
         output / "QUICKSTART.md",
         output / "TROUBLESHOOTING.md",
     ]
+    if full_archive.exists():
+        checksum_files.insert(2, full_archive)
     (output / "SHA256SUMS.txt").write_text(
-        "".join(f"{sha256(path)} *{path.name}\n" for path in checksum_files),
+        "".join(f"{cached_sha256(path)} *{path.name}\n" for path in checksum_files),
         encoding="utf-8",
     )
     return 0

@@ -8,6 +8,8 @@
   repair, resume/retry, staging, and atomic commit.
 - Adds double-click Offline Runtime install and ModernUI/ClassicUI launch
   entry points that locate the matching Portable Core without duplicating it.
+- Adds a single-folder Full Offline product for users who need Application and
+  Runtime in one extract-and-run archive.
 - Separates Application, Runtime, Settings, Cache, Logs, Projects, and Exports.
 - Removes only audited debug resources, bytecode caches, and debug symbols
   from the Core package. Training, reconstruction, Viewer, and export behavior

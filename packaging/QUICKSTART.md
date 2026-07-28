@@ -15,7 +15,11 @@
 
    `Runtime_Manager.ps1 -Import "<offline-package-directory>"`
 
-5. Run `Doctor.ps1` after installation or after moving the portable folder.
+5. The Runtime-only archive does not contain `GaussianOS.exe`. For a single
+   extract-and-run package, use `GaussianOS-Full-Offline-win-x64.7z`; its root
+   contains both `Application` and `Runtime`, and `Start_GaussianOS.bat`
+   launches directly.
+6. Run `Doctor.ps1` after installation or after moving the portable folder.
 
 Replace only `Application` when updating the Core. Keep `Runtime`, `Settings`,
 `Cache`, `Logs`, `Projects`, and `Exports` to preserve user and Runtime data.
