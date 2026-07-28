@@ -113,7 +113,7 @@ Release directory: `J:\GaussianOS-release-20260728`
 | --- | ---: | --- |
 | `GaussianOS-Portable-Core-win-x64.zip` | 267,257,718 | `e04d1d2908dc21c29829cc208321e960b14f67721d2fb57ab843ef8ec4e2a1f5` |
 | `GaussianOS-Offline-Runtime-win-x64.7z` | 12,323,188,782 | `ff03b454f9b05789a7b831cfdf50a607baddbddc6828ccc305837ccae5bda9ec` |
-| `GaussianOS-Full-Offline-win-x64.7z` | 12,501,427,835 | `ece16f5e7985823add5571cdc1cbc4170a3f114777e2e4ad00f0ed7f23be62f1` |
+| `GaussianOS-Full-Offline-win-x64.7z` | 12,501,429,769 | `b5c6cb70d124f1323149f94eb3745d3eed2c71fb2e4683dbd02757b4dfa7bb66` |
 
 The directory also contains `SHA256SUMS.txt`, `runtime-manifest.json`,
 `build-manifest.json`, `VERSION`, `CHANGELOG.md`, `QUICKSTART.md`, and
