@@ -19,8 +19,8 @@
 - Source compile: passed.
 - Test suite before distribution changes: 198 passed, 2 opt-in external
   compatibility checks skipped.
-- Test suite after the final changes: 211 passed, 2 identical opt-in checks
-  skipped (213 collected).
+- Test suite after the final changes: 213 passed, 2 identical opt-in checks
+  skipped (215 collected).
 - ModernUI and ClassicUI source GUI/WebEngine smoke: passed and visually
   inspected.
 - Baseline evidence:
@@ -111,8 +111,9 @@ Release directory: `J:\GaussianOS-release-20260728`
 
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `GaussianOS-Portable-Core-win-x64.zip` | 267,266,836 | `e46b099a47112279adc0303364dd330c9ee123449496dfe49aeecc290eb4662e` |
-| `GaussianOS-Offline-Runtime-win-x64.7z` | 12,323,186,221 | `32b9d8c4350ad22d17ffbd91e7c95ab15635b2f3096a0c7c9167e64d6c53edfd` |
+| `GaussianOS-Portable-Core-win-x64.zip` | 267,257,718 | `e04d1d2908dc21c29829cc208321e960b14f67721d2fb57ab843ef8ec4e2a1f5` |
+| `GaussianOS-Offline-Runtime-win-x64.7z` | 12,323,188,782 | `ff03b454f9b05789a7b831cfdf50a607baddbddc6828ccc305837ccae5bda9ec` |
+| `GaussianOS-Full-Offline-win-x64.7z` | 12,501,427,835 | `ece16f5e7985823add5571cdc1cbc4170a3f114777e2e4ad00f0ed7f23be62f1` |
 
 The directory also contains `SHA256SUMS.txt`, `runtime-manifest.json`,
 `build-manifest.json`, `VERSION`, `CHANGELOG.md`, `QUICKSTART.md`, and
