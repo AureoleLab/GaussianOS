@@ -70,6 +70,16 @@ def project_view(project: Project) -> dict[str, Any]:
     return value
 
 
+def pipeline_terminal_event(project: Project) -> tuple[str, str]:
+    """Map a persisted pipeline outcome to one truthful terminal UI event."""
+
+    if project.status == "succeeded":
+        return "complete", "Pipeline finished"
+    if project.status == "interrupted":
+        return "run_failed", "Pipeline interrupted"
+    return "run_failed", "Pipeline failed"
+
+
 def _configure_application_identity(application: Any) -> None:
     """Set identifiers before construction so QML Settings can persist."""
 
@@ -929,9 +939,10 @@ def main() -> int:
                         run_id=run_id,
                         generation=generation,
                     )
+                    kind, message = pipeline_terminal_event(completed)
                     self.event.emit(
-                        "complete",
-                        "Pipeline finished",
+                        kind,
+                        message,
                         {**identity, "status": completed.status},
                     )
                 except Exception as exc:

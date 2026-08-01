@@ -258,3 +258,16 @@ def test_repair_only_cli_has_shared_progress_callback(tmp_path: Path) -> None:
     assert "Repaired and verified" in (
         core / "Logs" / "runtime-operation-report.txt"
     ).read_text(encoding="utf-8")
+
+
+def test_portable_build_isolates_external_python_worker_host() -> None:
+    script = (Path(__file__).parents[2] / "scripts" / "build_portable.ps1").read_text(
+        encoding="utf-8"
+    )
+    policy = (Path(__file__).parents[2] / "scripts" / "package_policy.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Application\\_internal as cwd" in script
+    assert "worker_host" in script
+    assert "worker_host/workers/recon_colmap/__main__.py" in policy

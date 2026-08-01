@@ -29,7 +29,14 @@ from packages.artifact_store.store import atomic_write_json
 from packages.file_lock import ProjectLockError
 from packages.licensing import ProfilePolicyRegistry
 from packages.pipeline import CancellationToken, ExecutionOutcome, SubprocessWorkerRunner
-from packages.plugin_sdk import ExecutionProfile, PluginManifest, StageKind, StageRequest, StageStatus
+from packages.plugin_sdk import (
+    ErrorCode,
+    ExecutionProfile,
+    PluginManifest,
+    StageKind,
+    StageRequest,
+    StageStatus,
+)
 
 from .camera_timeline import build_camera_timeline
 from .project_paths import ProjectPaths
@@ -87,6 +94,8 @@ def _idle_project_write(method: Callable[..., Project]) -> Callable[..., Project
 class RuntimePaths:
     colmap: Path
     ffmpeg: str
+    worker_python: Path
+    worker_cwd: Path
     map_python: Path
     gsplat_python: Path
     gsplat_source: Path
@@ -104,17 +113,23 @@ class RuntimePaths:
         if getattr(sys, "frozen", False):
             from .portable import layout_paths
 
-            factory = layout_paths().runtime
+            layout = layout_paths()
+            factory = layout.runtime
+            worker_cwd = layout.application / "worker_host"
         else:
             factory = ROOT / ".gaussian-factory"
+            worker_cwd = ROOT
         bundled_ffmpeg = factory / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
         ffmpeg = str(bundled_ffmpeg) if bundled_ffmpeg.is_file() else (shutil.which("ffmpeg") or "ffmpeg")
         map_env = factory / "envs" / "mapanything-1.1.2"
         gsplat_env = factory / "envs" / "gsplat-1.5.3"
+        map_python = (map_env / "python.exe") if (map_env / "python.exe").is_file() else (map_env / "Scripts" / "python.exe")
         return cls(
             colmap=factory / "tools" / "colmap" / "3.13.0" / "bin" / "colmap.exe",
             ffmpeg=ffmpeg,
-            map_python=(map_env / "python.exe") if (map_env / "python.exe").is_file() else (map_env / "Scripts" / "python.exe"),
+            worker_python=map_python if getattr(sys, "frozen", False) else Path(sys.executable),
+            worker_cwd=worker_cwd,
+            map_python=map_python,
             gsplat_python=(gsplat_env / "python.exe") if (gsplat_env / "python.exe").is_file() else (gsplat_env / "Scripts" / "python.exe"),
             gsplat_source=factory / "sources" / "gsplat-v1.5.3",
             map_source=factory / "sources" / "map-anything-v1.1.2",
@@ -1133,8 +1148,8 @@ class PipelineController:
         return SubprocessWorkerRunner(
             artifact_store,
             self.policy,
-            worker_cwd=ROOT,
-            python_executable=python or sys.executable,
+            worker_cwd=self.runtime.worker_cwd,
+            python_executable=python or self.runtime.worker_python,
             poll_interval_seconds=0.1,
             cancellation_grace_seconds=5.0,
         ).run(
@@ -1201,6 +1216,15 @@ class PipelineController:
         )
         return WorkerStageError(message, diagnostics)
 
+    @staticmethod
+    def _is_colmap_quality_gate_failure(outcome: ExecutionOutcome) -> bool:
+        error = outcome.result.error
+        return bool(
+            error
+            and error.code is ErrorCode.OUTPUT_VALIDATION_FAILED
+            and error.details.get("failure_kind") == "quality_gate"
+        )
+
     def _reconstruct(self, project: Project, images: Path, token: CancellationToken, event: Callable[[str, str, dict[str, Any]], None] | None) -> Path:
         for stage in ("colmap", "fallback"):
             cached = self._previous(project, stage)
@@ -1221,9 +1245,17 @@ class PipelineController:
             return Path(state.artifact_paths[0])
         if token.is_cancelled:
             raise InterruptedError(token.reason)
+        if not self._is_colmap_quality_gate_failure(outcome):
+            state.status = "failed"
+            state.error = (
+                outcome.result.error.message
+                if outcome.result.error
+                else "COLMAP worker failed"
+            )
+            self._persist(project)
+            raise self._worker_failure("colmap", outcome, event)
         state.status, state.error = "fallback_required", outcome.result.error.message if outcome.result.error else "COLMAP failed"
         self._persist(project)
-        self._worker_failure("colmap", outcome, event)
         self._emit(event, "warning", "COLMAP failed its quality gate; starting MapAnything + COLMAP BA", {})
         return self._fallback(project, images, count, token, event)
 

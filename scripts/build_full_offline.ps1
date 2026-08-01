@@ -71,6 +71,11 @@ if (Test-Path -LiteralPath (Join-Path $package 'Runtime\Runtime')) {
 }
 foreach ($required in @(
     'Application\GaussianOS.exe',
+    'Application\worker_host\workers\recon_colmap\__main__.py',
+    'Application\worker_host\workers\recon_mapanything\__main__.py',
+    'Application\worker_host\workers\train_gsplat\__main__.py',
+    'Application\worker_host\packages\plugin_sdk\contracts.py',
+    'Application\worker_host\packages\source_lock.py',
     'Runtime',
     'Start_GaussianOS.bat',
     'Start_GaussianOS_Classic.bat',

@@ -34,6 +34,11 @@ FORBIDDEN_CORE_SUFFIXES = {
 }
 REQUIRED_APPLICATION_PATHS = (
     "GaussianOS.exe",
+    "worker_host/workers/recon_colmap/__main__.py",
+    "worker_host/workers/recon_mapanything/__main__.py",
+    "worker_host/workers/train_gsplat/__main__.py",
+    "worker_host/packages/plugin_sdk/contracts.py",
+    "worker_host/packages/source_lock.py",
     "_internal/apps/desktop/qml/modern/Main.qml",
     "_internal/apps/desktop/qml/classic/Main.qml",
     "_internal/apps/desktop/viewer_web/index.html",

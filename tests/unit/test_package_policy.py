@@ -6,6 +6,7 @@ import pytest
 
 from scripts.package_policy import (
     DEBUG_RESOURCE_PAIRS,
+    REQUIRED_APPLICATION_PATHS,
     audit_core,
     prune_application,
 )
@@ -14,12 +15,7 @@ from scripts.package_policy import (
 def _minimal_core(root: Path) -> tuple[Path, Path]:
     package = root / "GaussianOS-Portable-Core-win-x64"
     application = package / "Application"
-    for relative in (
-        "GaussianOS.exe",
-        "_internal/apps/desktop/qml/modern/Main.qml",
-        "_internal/apps/desktop/qml/classic/Main.qml",
-        "_internal/apps/desktop/viewer_web/index.html",
-    ):
+    for relative in REQUIRED_APPLICATION_PATHS:
         path = application / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"required")

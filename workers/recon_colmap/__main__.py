@@ -343,7 +343,7 @@ def _run(request: StageRequest, result_path: Path, started_at: datetime) -> tupl
             started_at,
             ErrorCode.OUTPUT_VALIDATION_FAILED,
             "COLMAP reconstruction failed a required quality gate",
-            details={"metrics": metrics_payload},
+            details={"failure_kind": "quality_gate", "metrics": metrics_payload},
         ), 10
 
     artifact = ArtifactManifest(

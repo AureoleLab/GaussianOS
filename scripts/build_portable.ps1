@@ -65,6 +65,23 @@ try {
 }
 Move-Item -LiteralPath (Join-Path $pyinstallerDist 'GaussianOS') -Destination $application
 
+# External Runtime Pythons must never use Application\_internal as cwd: that
+# directory contains CPython 3.13 extension modules from PyInstaller which can
+# shadow the 3.10/3.12 Runtime stdlib. Keep a pure-Python worker host beside it.
+$workerHost = Join-Path $application 'worker_host'
+New-Item -ItemType Directory -Force -Path $workerHost | Out-Null
+foreach ($directory in @('workers', 'packages', 'configs')) {
+    $sourceDirectory = Join-Path $root $directory
+    $destinationDirectory = Join-Path $workerHost $directory
+    & robocopy.exe `
+        $sourceDirectory `
+        $destinationDirectory `
+        /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NP /XD __pycache__ | Out-Host
+    if ($LASTEXITCODE -gt 7) {
+        throw "Worker host copy failed ($LASTEXITCODE): $sourceDirectory"
+    }
+}
+
 $pruneReport = Join-Path $buildRoot 'core-prune-report.json'
 & uv run python scripts/package_policy.py prune `
     --application $application `

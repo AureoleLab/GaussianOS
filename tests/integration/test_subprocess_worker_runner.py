@@ -98,6 +98,74 @@ class SubprocessWorkerRunnerTests(unittest.TestCase):
         self.assertNotEqual(outcome.return_code, 0)
         self.assertFalse(any(self.store.artifacts_root.iterdir()))
 
+    def test_special_character_paths_run_without_shell_parsing(self) -> None:
+        special = Path(self.temporary.name) / "Worker (portable) 中文 space" / ("long-" + "x" * 80)
+        special.mkdir(parents=True)
+        store = ArtifactStore(special / "result store")
+        entrypoint = self.manifest.entrypoint.model_copy(
+            update={"environment": {"PYTHONPATH": str(ROOT)}}
+        )
+        manifest = self.manifest.model_copy(update={"entrypoint": entrypoint})
+        runner = SubprocessWorkerRunner(
+            store,
+            self.runner.policy_registry,
+            worker_cwd=special,
+            poll_interval_seconds=0.01,
+        )
+
+        outcome = runner.run(
+            self.request(payload="路径通过"), manifest, timeout_seconds=5
+        )
+
+        self.assertEqual(outcome.result.status, StageStatus.SUCCEEDED)
+        execution = (outcome.attempt_archive / "execution.json").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Worker (portable) 中文 space", execution)
+        self.assertIn('"argv"', execution)
+
+    def test_launch_protocol_failure_retains_exit_stdout_stderr_and_argv(self) -> None:
+        entrypoint = self.manifest.entrypoint.model_copy(
+            update={
+                "command": (
+                    "{python}",
+                    "-c",
+                    "import sys; print('retained stdout'); print('retained stderr', file=sys.stderr); raise SystemExit(23)",
+                )
+            }
+        )
+        manifest = self.manifest.model_copy(update={"entrypoint": entrypoint})
+
+        outcome = self.runner.run(self.request(), manifest, timeout_seconds=5)
+
+        self.assertEqual(outcome.result.status, StageStatus.FAILED)
+        self.assertEqual(outcome.return_code, 23)
+        details = outcome.result.error.details
+        self.assertEqual(details["return_code"], 23)
+        self.assertIn("retained stdout", details["stdout_tail"])
+        self.assertIn("retained stderr", details["stderr_tail"])
+        self.assertEqual(details["cwd"], str(ROOT))
+        self.assertIsInstance(details["argv"], list)
+        self.assertTrue(details["expected_result_json"].endswith("result.worker.json"))
+        execution = (outcome.attempt_archive / "execution.json").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"pid"', execution)
+        self.assertIn('"return_code":23', execution)
+
+    def test_missing_result_json_is_a_protocol_failure(self) -> None:
+        outcome = self.runner.run(
+            self.request(mode="no_result"), self.manifest, timeout_seconds=5
+        )
+
+        self.assertEqual(outcome.result.status, StageStatus.FAILED)
+        self.assertEqual(outcome.result.error.code, ErrorCode.INVALID_RESULT)
+        self.assertEqual(outcome.return_code, 0)
+        self.assertIn("did not write", outcome.result.error.message)
+        self.assertTrue((outcome.attempt_archive / "stdout.log").is_file())
+        self.assertTrue((outcome.attempt_archive / "stderr.log").is_file())
+        self.assertTrue((outcome.attempt_archive / "execution.json").is_file())
+
     def test_cuda_oom_is_reported_without_host_failure(self) -> None:
         outcome = self.runner.run(
             self.request(mode="cuda_oom"), self.manifest, timeout_seconds=5

@@ -35,10 +35,13 @@ from packages.plugin_sdk import (
 )
 from packages.quality import parse_model_analyzer, read_images_txt
 from packages.scene_bundle import CameraTensors
+from packages.source_lock import verify_source_lock
 
 
 MAPANYTHING_COMMIT = "c845b8f4f6cde0c20aecd87573656c3f69f5b2b0"
 DINO_COMMIT = "7764ea0f912e53c92e82eb78a2a1631e92725fc8"
+MAPANYTHING_SOURCE_TREE_SHA256 = "96163db66fd182901a7c6671203a492e184a64c3e05f4d7252bb0b1bb5654875"
+DINO_SOURCE_TREE_SHA256 = "8371ed3af8ec272adb6630eb74b73170852b863a76212b820689f0c74320c048"
 CHECKPOINT_SHA256 = "fa06c0fdccefc5048e072c85935d5789b1e36b307f3859033c17f9dcb9fd5201"
 DINO_WEIGHT_SHA256 = "baf8467e50af277596bbbafa06887c177ee899ab46033649c383577d7e9309d3"
 COLMAP_SHA256 = "74470eec4cd484b1875fed83e7cefa407e35e93ea05eb294f0bed5a34d7e4e1a"
@@ -67,12 +70,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _git_commit(path: Path) -> str:
-    return subprocess.check_output(
-        ["git", "-C", str(path), "rev-parse", "HEAD"], text=True, encoding="utf-8"
-    ).strip()
 
 
 def _atomic_result(path: Path, result: StageResult) -> None:
@@ -187,8 +184,18 @@ def _baseline_colmap(config: FallbackConfig, work: Path, logs: Path) -> dict[str
 def _load_model(config: FallbackConfig):
     source = Path(config.mapanything_source).resolve()
     dino_source = Path(config.dinov2_source).resolve()
-    if _git_commit(source) != MAPANYTHING_COMMIT or _git_commit(dino_source) != DINO_COMMIT:
-        raise RuntimeError("source commit lock mismatch")
+    verify_source_lock(
+        source,
+        expected_commit=MAPANYTHING_COMMIT,
+        expected_tree_sha256=MAPANYTHING_SOURCE_TREE_SHA256,
+        label="MapAnything",
+    )
+    verify_source_lock(
+        dino_source,
+        expected_commit=DINO_COMMIT,
+        expected_tree_sha256=DINO_SOURCE_TREE_SHA256,
+        label="DINOv2",
+    )
     # A portable runtime installs MapAnything from the locked source directory
     # rather than retaining an editable-install pointer to the build machine.
     source_text = str(source)

@@ -59,10 +59,12 @@ from packages.plugin_sdk import (
 )
 from packages.quality import read_images_txt
 from packages.scene_bundle import CameraTensors, GaussianTensors, write_scene_bundle
+from packages.source_lock import verify_source_lock
 
 
 GSPLAT_VERSION = "1.5.3"
 GSPLAT_COMMIT = "937e29912570c372bed6747a5c9bf85fed877bae"
+GSPLAT_SOURCE_TREE_SHA256 = "4dd5388a0225b00e62bcb114a074c446b2129797957612a4d8eb0f8d2eac99d0"
 COLMAP_COMMIT = "0b31f98133b470eae62811b557dc2bcff1e4f9a5"
 
 
@@ -263,13 +265,12 @@ def _load_upstream(config: TrainConfig):
     source = Path(config.gsplat_source).resolve()
     if not (source / "examples" / "datasets" / "colmap.py").is_file():
         raise FileNotFoundError("locked gsplat source checkout is incomplete")
-    import subprocess
-
-    commit = subprocess.check_output(
-        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True, encoding="utf-8"
-    ).strip()
-    if commit != GSPLAT_COMMIT:
-        raise RuntimeError(f"gsplat source commit mismatch: {commit}")
+    verify_source_lock(
+        source,
+        expected_commit=GSPLAT_COMMIT,
+        expected_tree_sha256=GSPLAT_SOURCE_TREE_SHA256,
+        label="gsplat",
+    )
     from gsplat.rendering import rasterization
     from gsplat.strategy import DefaultStrategy
 

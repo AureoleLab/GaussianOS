@@ -172,6 +172,7 @@ class SubprocessWorkerRunner:
         result_path = attempt.path / "result.worker.json"
         stdout_path = attempt.path / "stdout.log"
         stderr_path = attempt.path / "stderr.log"
+        execution_path = attempt.path / "execution.json"
         atomic_write_json(request_path, bound_request.model_dump(mode="json"))
 
         command = self._build_command(manifest, request_path, result_path)
@@ -182,8 +183,39 @@ class SubprocessWorkerRunner:
                 "GAUSSIAN_FACTORY_ATTEMPT_ID": attempt.attempt_id,
                 "GAUSSIAN_FACTORY_ATTEMPT_DIR": str(attempt.path),
                 "GAUSSIAN_FACTORY_PROFILE": request.profile.value,
+                # Portable Runtime environments are manifest-locked artifacts.
+                # Never let imports add or rewrite __pycache__ inside them or
+                # the next doctor run would report self-inflicted corruption.
+                "PYTHONDONTWRITEBYTECODE": "1",
             }
         )
+
+        execution_record: dict[str, Any] = {
+            "schema_version": "gaussianos-worker-execution/v1",
+            "state": "prepared",
+            "executable": command[0],
+            "argv": command,
+            "command_line": subprocess.list2cmdline(command),
+            "cwd": str(self.worker_cwd),
+            "pid": None,
+            "return_code": None,
+            "launch_exception": None,
+            "request_json": str(request_path),
+            "expected_result_json": str(result_path),
+            "stdout_log": str(stdout_path),
+            "stderr_log": str(stderr_path),
+            "environment": {
+                "entrypoint_overrides": dict(manifest.entrypoint.environment),
+                "GAUSSIAN_FACTORY_ATTEMPT_ID": attempt.attempt_id,
+                "GAUSSIAN_FACTORY_ATTEMPT_DIR": str(attempt.path),
+                "GAUSSIAN_FACTORY_PROFILE": request.profile.value,
+                "PYTHONDONTWRITEBYTECODE": env["PYTHONDONTWRITEBYTECODE"],
+                "PATH": env.get("PATH"),
+                "PYTHONHOME": env.get("PYTHONHOME"),
+                "PYTHONPATH": env.get("PYTHONPATH"),
+            },
+        }
+        atomic_write_json(execution_path, execution_record)
 
         process: subprocess.Popen[bytes] | None = None
         stop_reason: ErrorCode | None = None
@@ -206,6 +238,8 @@ class SubprocessWorkerRunner:
                 else:
                     popen_options["start_new_session"] = True
                 process = subprocess.Popen(**popen_options)
+                execution_record.update({"state": "running", "pid": process.pid})
+                atomic_write_json(execution_path, execution_record)
                 return_code, stop_reason, stop_message = self._wait_for_process(
                     process,
                     attempt,
@@ -213,27 +247,60 @@ class SubprocessWorkerRunner:
                     cancellation_token,
                 )
         except OSError as exc:
+            execution_record.update(
+                {
+                    "state": "launch_failed",
+                    "pid": process.pid if process is not None else None,
+                    "return_code": return_code,
+                    "launch_exception": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            atomic_write_json(execution_path, execution_record)
             result = self._failure_result(
                 request,
                 started_at,
                 ErrorCode.DEPENDENCY_MISSING,
                 f"worker process could not start: {exc}",
                 retryable=False,
+                details=self._failure_diagnostics(
+                    execution_record, stdout_path, stderr_path
+                ),
             )
             archive = self._finish_failure(attempt, result, return_code)
             return ExecutionOutcome(result, attempt_archive=archive, return_code=return_code)
         except Exception as exc:
             if process is not None and process.poll() is None:
                 self._terminate_process_tree(process)
+            execution_record.update(
+                {
+                    "state": "supervision_failed",
+                    "pid": process.pid if process is not None else None,
+                    "return_code": return_code,
+                    "launch_exception": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            atomic_write_json(execution_path, execution_record)
             result = self._failure_result(
                 request,
                 started_at,
                 ErrorCode.INTERNAL_ERROR,
                 f"runner failed while supervising worker: {exc}",
                 retryable=False,
+                details=self._failure_diagnostics(
+                    execution_record, stdout_path, stderr_path
+                ),
             )
             archive = self._finish_failure(attempt, result, return_code)
             return ExecutionOutcome(result, attempt_archive=archive, return_code=return_code)
+
+        execution_record.update(
+            {
+                "state": "exited",
+                "pid": process.pid if process is not None else None,
+                "return_code": return_code,
+            }
+        )
+        atomic_write_json(execution_path, execution_record)
 
         if stop_reason is not None:
             status = (
@@ -248,6 +315,9 @@ class SubprocessWorkerRunner:
                 stop_message,
                 retryable=stop_reason is ErrorCode.TIMEOUT,
                 status=status,
+                details=self._failure_diagnostics(
+                    execution_record, stdout_path, stderr_path
+                ),
             )
             archive = self._finish_failure(attempt, result, return_code)
             return ExecutionOutcome(result, attempt_archive=archive, return_code=return_code)
@@ -266,7 +336,9 @@ class SubprocessWorkerRunner:
                 error_code,
                 parse_error,
                 retryable=error_code in {ErrorCode.WORKER_CRASHED, ErrorCode.CUDA_OOM},
-                details={"return_code": return_code, "stderr_tail": stderr_tail},
+                details=self._failure_diagnostics(
+                    execution_record, stdout_path, stderr_path
+                ),
             )
             archive = self._finish_failure(attempt, result, return_code)
             return ExecutionOutcome(result, attempt_archive=archive, return_code=return_code)
@@ -282,7 +354,9 @@ class SubprocessWorkerRunner:
                 self._classify_process_failure(return_code, self._read_tail(stderr_path)),
                 f"worker returned exit code {return_code} despite a success result",
                 retryable=True,
-                details={"return_code": return_code},
+                details=self._failure_diagnostics(
+                    execution_record, stdout_path, stderr_path
+                ),
             )
             archive = self._finish_failure(attempt, result, return_code)
             return ExecutionOutcome(result, attempt_archive=archive, return_code=return_code)
@@ -476,6 +550,28 @@ class SubprocessWorkerRunner:
                 return stream.read().decode("utf-8", errors="replace")
         except OSError:
             return ""
+
+    @classmethod
+    def _failure_diagnostics(
+        cls,
+        execution_record: dict[str, Any],
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> dict[str, Any]:
+        """Return bounded inline diagnostics while full logs remain archived."""
+
+        return {
+            "command_line": execution_record["command_line"],
+            "argv": list(execution_record["argv"]),
+            "cwd": execution_record["cwd"],
+            "pid": execution_record.get("pid"),
+            "return_code": execution_record.get("return_code"),
+            "stdout_tail": cls._read_tail(stdout_path),
+            "stderr_tail": cls._read_tail(stderr_path),
+            "launch_exception": execution_record.get("launch_exception"),
+            "expected_result_json": execution_record["expected_result_json"],
+            "execution_record": str(stdout_path.with_name("execution.json")),
+        }
 
     @staticmethod
     def _classify_process_failure(return_code: int | None, stderr_tail: str) -> ErrorCode:
