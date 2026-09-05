@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -106,3 +107,48 @@ def test_full_offline_builder_keeps_one_application_and_runtime_root() -> None:
     assert "manifests differ" in script
     assert "doctor_report(full=True)" in script
     assert "single-folder offline launch" in script
+    assert "Generate_Diagnostics.bat" in script
+    assert "ExcludePythonCache" in script
+    assert "Get-ChildItem -LiteralPath $package -Recurse -File -Force" in script
+    assert "archive integrity test failed" in script
+
+
+def test_portable_build_and_both_ui_shells_include_one_click_diagnostics() -> None:
+    root = Path(__file__).parents[2]
+    build = (root / "scripts" / "build_portable.ps1").read_text(encoding="utf-8")
+    launcher = (root / "packaging" / "Generate_Diagnostics.bat").read_text(
+        encoding="utf-8"
+    )
+    modern = (root / "apps" / "desktop" / "qml" / "modern" / "Main.qml").read_text(
+        encoding="utf-8"
+    )
+    classic = (root / "apps" / "desktop" / "qml" / "classic" / "Main.qml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Generate_Diagnostics.bat" in build
+    assert "--diagnostic-zip" in launcher
+    assert '"Generate diagnostic ZIP"' in modern
+    assert 'text: "Generate Diagnostic ZIP"' in classic
+    assert "backend.generateDiagnostics()" in modern
+    assert "backend.generateDiagnostics()" in classic
+
+
+def test_offline_runtime_locks_lpips_alexnet_and_worker_uses_it_locally() -> None:
+    root = Path(__file__).parents[2]
+    manifest = json.loads((root / "dist" / "runtime-manifest.json").read_text())
+    component = next(
+        item
+        for item in manifest["components"]
+        if item["component_id"] == "lpips-alexnet-model"
+    )
+    assert component["required"] is True
+    assert component["installed_size_bytes"] == 244408911
+    assert component["verification"][0]["sha256"] == (
+        "7be5be791159472b1fbf3c69796f7cb30dca7ad8466c2df70058c37116cdee02"
+    )
+    offline_builder = (root / "scripts" / "build_offline_bundle.ps1").read_text()
+    worker = (root / "workers" / "train_gsplat" / "__main__.py").read_text()
+    assert "downloads\\lpips-alexnet" in offline_builder
+    assert "torch.hub.set_dir" in worker
+    assert "lpips_alexnet_checkpoint" in worker

@@ -26,6 +26,7 @@ def _runtime(tmp_path: Path) -> RuntimePaths:
         tmp_path,
         tmp_path,
         tmp_path,
+        tmp_path / "alexnet-owt-7be5be79.pth",
     )
 
 
@@ -127,7 +128,17 @@ def test_succeeded_project_is_always_presented_at_one_hundred_percent():
 
 def test_failed_pipeline_never_emits_complete_terminal_event():
     failed = Project("id", "name", ".", status="failed")
-    assert pipeline_terminal_event(failed) == ("run_failed", "Pipeline failed")
+    assert pipeline_terminal_event(failed) == (
+        "run_failed",
+        "Pipeline failed without a recorded reason",
+    )
+    failed.stages["colmap"] = StageState(
+        status="failed", error="No good initial image pair found"
+    )
+    assert pipeline_terminal_event(failed) == (
+        "run_failed",
+        "colmap: No good initial image pair found",
+    )
     succeeded = Project("id", "name", ".", status="succeeded")
     assert pipeline_terminal_event(succeeded) == ("complete", "Pipeline finished")
 

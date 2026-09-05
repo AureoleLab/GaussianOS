@@ -244,6 +244,43 @@ def test_modern_export_signal_reaches_real_backend_and_classic_remains_available
     assert "onClicked: backend.openExportsDirectory(" in classic
 
 
+def test_blender_style_viewport_controls_and_scene_transform_are_wired() -> None:
+    main = (MODERN / "Main.qml").read_text(encoding="utf-8-sig")
+    viewer = (COMPONENTS / "ViewerPane.qml").read_text(encoding="utf-8-sig")
+    inspector = (COMPONENTS / "Inspector.qml").read_text(encoding="utf-8-sig")
+    backend = (ROOT / "apps" / "desktop" / "main.py").read_text(encoding="utf-8")
+
+    for object_name in (
+        "viewerTool-", "viewerAppearanceButton", "viewerAppearancePopup"
+    ):
+        assert object_name in viewer
+    for object_name in (
+        "sceneTransformInspector", "sceneLocation", "sceneRotation",
+        "sceneScale", "sceneScaleLock", "sceneTransformApply",
+    ):
+        assert object_name in inspector
+    assert "webChannel: WebChannel" in viewer
+    assert "bridge: viewerBridge" in main
+    assert "backend.setScenePlacement(payload)" in main
+    assert "class ViewerBridge(QObject)" in backend
+    assert "commitScenePlacement" in backend
+
+
+def test_viewer_overlay_preferences_migrate_to_clean_defaults() -> None:
+    main = (MODERN / "Main.qml").read_text(encoding="utf-8-sig")
+    viewer = (COMPONENTS / "ViewerPane.qml").read_text(encoding="utf-8-sig")
+
+    assert 'property string viewerCameraOverlay: "selected"' in main
+    assert "viewerOverlaySettingsVersion < 2" in main
+    assert 'modernSettings.viewerCameraOverlay = "selected"' in main
+    assert "modernSettings.viewerShowCameraPath = false" in main
+    assert "modernSettings.viewerShowPoints = false" in main
+    assert 'model: ["Off", "Selected", "All"]' in viewer
+    assert '"cameraOverlay": viewerCameraOverlay' in viewer
+    assert '"showPoints": viewerShowPoints' in viewer
+    assert "modernSettings.viewerShowPoints = showPoints" in main
+
+
 def test_project_library_delete_is_primary_and_model_refresh_is_stable() -> None:
     main = (MODERN / "Main.qml").read_text(encoding="utf-8-sig")
     library = (COMPONENTS / "ProjectLibrary.qml").read_text(encoding="utf-8-sig")

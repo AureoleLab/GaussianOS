@@ -73,6 +73,27 @@ class WorkerStageError(RuntimeError):
         self.diagnostics = diagnostics
 
 
+class PipelineStartError(RuntimeError):
+    """A structured, actionable failure raised before any stage is started."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str,
+        failure_kind: str,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.failure_kind = failure_kind
+        self.diagnostics = {
+            "failure_kind": failure_kind,
+            "error_code": error_code,
+            **(diagnostics or {}),
+        }
+
+
 def _idle_project_write(method: Callable[..., Project]) -> Callable[..., Project]:
     """Reject desktop metadata/input writes while any process owns the run."""
 
@@ -104,13 +125,18 @@ class RuntimePaths:
     map_config: Path
     dino_source: Path
     dino_checkpoint: Path
+    lpips_alexnet_checkpoint: Path
 
     @classmethod
     def discover(cls) -> "RuntimePaths":
         # A frozen portable build keeps every mutable dependency beside the
         # executable.  Source/developer runs preserve the historic local
         # location.  This must not fall back to user-profile caches.
-        if getattr(sys, "frozen", False):
+        portable_context = bool(
+            getattr(sys, "frozen", False)
+            or os.environ.get("GAUSSIANOS_DISTRIBUTION_ROOT")
+        )
+        if portable_context:
             from .portable import layout_paths
 
             layout = layout_paths()
@@ -127,7 +153,7 @@ class RuntimePaths:
         return cls(
             colmap=factory / "tools" / "colmap" / "3.13.0" / "bin" / "colmap.exe",
             ffmpeg=ffmpeg,
-            worker_python=map_python if getattr(sys, "frozen", False) else Path(sys.executable),
+            worker_python=map_python if portable_context else Path(sys.executable),
             worker_cwd=worker_cwd,
             map_python=map_python,
             gsplat_python=(gsplat_env / "python.exe") if (gsplat_env / "python.exe").is_file() else (gsplat_env / "Scripts" / "python.exe"),
@@ -137,23 +163,226 @@ class RuntimePaths:
             map_config=factory / "downloads" / "map-anything-apache-00f9c245" / "config.json",
             dino_source=factory / "sources" / "dinov2-7764ea0",
             dino_checkpoint=factory / "downloads" / "dinov2-7764ea0" / "dinov2_vitg14_pretrain.pth",
+            lpips_alexnet_checkpoint=factory
+            / "downloads"
+            / "lpips-alexnet"
+            / "checkpoints"
+            / "alexnet-owt-7be5be79.pth",
         )
 
 
 class PipelineController:
     """Thread-safe project orchestration with cancellation and restart resume."""
 
-    def __init__(self, store: ProjectStore, artifact_root: str | Path, runtime: RuntimePaths | None = None) -> None:
+    def __init__(
+        self,
+        store: ProjectStore,
+        artifact_root: str | Path,
+        runtime: RuntimePaths | None = None,
+        *,
+        enforce_preflight: bool | None = None,
+    ) -> None:
         self.store = store
         # Kept only as a compatibility hint for callers that still pass the P2
         # global location.  P3 workers always receive a per-project/per-run
         # ArtifactStore rooted by ProjectPaths.
         self.legacy_artifact_root = Path(artifact_root).resolve()
         self.runtime = runtime or RuntimePaths.discover()
+        self.enforce_preflight = (
+            bool(getattr(sys, "frozen", False))
+            if enforce_preflight is None
+            else enforce_preflight
+        )
         self.policy = ProfilePolicyRegistry.from_directory(ROOT / "configs" / "profiles")
         self._tokens: dict[str, CancellationToken] = {}
         self._running: set[str] = set()
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _write_probe(path: Path) -> str | None:
+        marker = path / f".gaussianos-pipeline-probe-{uuid4().hex}.tmp"
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            with marker.open("x", encoding="utf-8") as stream:
+                stream.write("pipeline preflight\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            marker.unlink()
+            return None
+        except OSError as exc:
+            try:
+                marker.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return f"{type(exc).__name__}: {exc}"
+
+    def preflight(self, project: Project) -> dict[str, Any]:
+        """Validate the portable launch boundary before changing run state."""
+
+        if not self.enforce_preflight:
+            return {"status": "skipped", "reason": "developer context"}
+        from .portable import (
+            CORE_VERSION,
+            doctor_report,
+            layout_paths,
+            load_manifest,
+            tree_size,
+        )
+
+        layout = layout_paths()
+        manifest = load_manifest()
+        component_versions = {
+            str(item["component_id"]): str(item["version"])
+            for item in manifest.get("components", [])
+        }
+        required = {
+            "desktop": layout.application / "GaussianOS.exe",
+            "worker_host": self.runtime.worker_cwd,
+            "worker_python": self.runtime.worker_python,
+            "map_python": self.runtime.map_python,
+            "gsplat_python": self.runtime.gsplat_python,
+            "colmap": self.runtime.colmap,
+            "ffmpeg": Path(self.runtime.ffmpeg),
+            "colmap_worker": self.runtime.worker_cwd
+            / "workers"
+            / "recon_colmap"
+            / "__main__.py",
+            "fallback_worker": self.runtime.worker_cwd
+            / "workers"
+            / "recon_mapanything"
+            / "__main__.py",
+            "training_worker": self.runtime.worker_cwd
+            / "workers"
+            / "train_gsplat"
+            / "__main__.py",
+            "lpips_alexnet_checkpoint": self.runtime.lpips_alexnet_checkpoint,
+        }
+        missing = [
+            str(path)
+            for path in required.values()
+            if not (path.is_file() or path.is_dir())
+        ]
+        motw = []
+        for path in required.values():
+            if not path.is_file():
+                continue
+            try:
+                if Path(str(path) + ":Zone.Identifier").read_bytes():
+                    motw.append(str(path))
+            except OSError:
+                pass
+        base = {
+            "core_version": CORE_VERSION,
+            "runtime_manifest_schema": manifest.get("schema_version"),
+            "runtime_versions": component_versions,
+            "missing_or_quarantined_files": missing,
+            "motw_files": motw,
+        }
+        if missing:
+            raise PipelineStartError(
+                "Portable Runtime/Core files are missing. Antivirus quarantine or an incomplete extraction is likely; run Generate_Diagnostics.bat.",
+                error_code="runtime_file_missing",
+                failure_kind="runtime_integrity",
+                diagnostics=base,
+            )
+        size_mismatches: list[dict[str, Any]] = []
+        for component in manifest.get("components", []):
+            relative = component.get("relative_install_path")
+            expected = component.get("installed_size_bytes")
+            if not isinstance(relative, str) or not isinstance(expected, int):
+                continue
+            component_root = layout.runtime.joinpath(*relative.replace("\\", "/").split("/"))
+            try:
+                actual = tree_size(component_root)
+            except OSError as exc:
+                raise PipelineStartError(
+                    f"Runtime inventory could not be read: {exc}",
+                    error_code="runtime_inventory_unreadable",
+                    failure_kind="runtime_integrity",
+                    diagnostics=base,
+                ) from exc
+            if actual != expected:
+                size_mismatches.append(
+                    {
+                        "component_id": component.get("component_id"),
+                        "expected_bytes": expected,
+                        "actual_bytes": actual,
+                    }
+                )
+        base["runtime_size_mismatches"] = size_mismatches
+        if size_mismatches:
+            raise PipelineStartError(
+                "Portable Runtime inventory differs from its locked manifest. The package is incomplete, modified, or was quarantined; run Generate_Diagnostics.bat.",
+                error_code="runtime_component_size_mismatch",
+                failure_kind="runtime_integrity",
+                diagnostics=base,
+            )
+        report = doctor_report(full=False)
+        base["doctor"] = report.payload()
+        if report.core_status != "ok" or report.runtime_status != "ok":
+            code = (
+                report.issues[0].code
+                if report.issues
+                else "runtime_integrity_failed"
+            )
+            raise PipelineStartError(
+                "Portable Runtime integrity check failed; run Generate_Diagnostics.bat and restore only the verified package files.",
+                error_code=code,
+                failure_kind="runtime_integrity",
+                diagnostics=base,
+            )
+        if report.gpu_status in {"unavailable", "incompatible"}:
+            code = next(
+                (issue.code for issue in report.issues if issue.category == "gpu"),
+                "gpu_unavailable",
+            )
+            raise PipelineStartError(
+                "A compatible NVIDIA GPU/driver was not detected. Update the GPU driver; do not install Python or alter PATH.",
+                error_code=code,
+                failure_kind="gpu_preflight",
+                diagnostics=base,
+            )
+        writable = {
+            "workspace": self.store.paths(project).workspace,
+            "projects": layout.projects,
+            "cache": layout.cache,
+            "logs": layout.logs,
+            "temp": layout.cache / "Temp",
+        }
+        write_failures = {
+            label: error
+            for label, path in writable.items()
+            if (error := self._write_probe(path)) is not None
+        }
+        base["write_failures"] = write_failures
+        if write_failures:
+            raise PipelineStartError(
+                "Pipeline directories are not writable: "
+                + ", ".join(sorted(write_failures)),
+                error_code="path_not_writable",
+                failure_kind="filesystem_preflight",
+                diagnostics=base,
+            )
+        try:
+            free_bytes = shutil.disk_usage(self.store.paths(project).workspace).free
+        except OSError as exc:
+            raise PipelineStartError(
+                f"Could not query free disk space: {exc}",
+                error_code="disk_query_failed",
+                failure_kind="filesystem_preflight",
+                diagnostics=base,
+            ) from exc
+        base["disk_free_bytes"] = free_bytes
+        minimum_free = 5 * 1024**3
+        base["minimum_disk_free_bytes"] = minimum_free
+        if free_bytes < minimum_free:
+            raise PipelineStartError(
+                f"Insufficient disk space: {free_bytes / 1024**3:.1f} GiB free; at least 5 GiB is required to start.",
+                error_code="disk_space_insufficient",
+                failure_kind="filesystem_preflight",
+                diagnostics=base,
+            )
+        return {"status": "ok", **base}
 
     def create_project(self, name: str, project_root: str | Path) -> Project:
         """Control-plane-only project creation entry point for the GUI."""
@@ -827,6 +1056,7 @@ class PipelineController:
         project = self.store.load(project_id)
         if not project.input_path or not project.input_kind:
             raise ValueError("import a video or image folder first")
+        self.preflight(project)
         run_id = run_id or self.new_run_id(project_id)
         token = CancellationToken()
         with self._lock:
@@ -908,24 +1138,49 @@ class PipelineController:
             if isinstance(exc, WorkerStageError):
                 error_payload.update(exc.diagnostics)
             if project.run_id:
-                try:
-                    atomic_write_json(
-                        self.store.paths(project).run(project.run_id).logs
-                        / "pipeline-error.json",
-                        {
-                            "schema_version": "gaussianos-pipeline-error/v1",
-                            "project_id": project.project_id,
-                            "run_id": project.run_id,
-                            "generation": generation,
-                            "stage": project.current_stage or error_payload.get(
-                                "worker_stage", "pipeline"
-                            ),
-                            "message": str(exc),
-                            **error_payload,
-                        },
+                run_paths = self.store.paths(project).run(project.run_id)
+                run_root = run_paths.root
+                pipeline_log = run_paths.logs / "pipeline-error.json"
+                worker_details = error_payload.get("worker_error_details", {})
+                failure_record = {
+                    "schema_version": "gaussianos-pipeline-error/v2",
+                    "project_id": project.project_id,
+                    "run_id": project.run_id,
+                    "generation": generation,
+                    "stage": project.current_stage
+                    or error_payload.get("worker_stage", "pipeline"),
+                    "failure_kind": (
+                        worker_details.get("failure_kind")
+                        if isinstance(worker_details, dict)
+                        else None
                     )
+                    or ("worker_execution" if isinstance(exc, WorkerStageError) else "pipeline"),
+                    "error_code": error_payload.get("worker_error_code")
+                    or type(exc).__name__,
+                    "message": str(exc),
+                    "logs_path": str(run_paths.logs),
+                    **error_payload,
+                }
+                try:
+                    atomic_write_json(pipeline_log, failure_record)
                 except (OSError, ProjectStoreError, TypeError, ValueError):
                     pass
+                try:
+                    from .diagnostics import create_diagnostic_bundle
+
+                    diagnostic = create_diagnostic_bundle(
+                        full=False,
+                        project_roots=(run_root,),
+                        include_worker_probes=False,
+                    )
+                    failure_record["diagnostic_bundle"] = str(diagnostic)
+                    atomic_write_json(pipeline_log, failure_record)
+                    error_payload["diagnostic_bundle"] = str(diagnostic)
+                    error_payload["logs_path"] = str(run_paths.logs)
+                except Exception as diagnostic_exc:
+                    error_payload["diagnostic_error"] = (
+                        f"{type(diagnostic_exc).__name__}: {diagnostic_exc}"
+                    )
             self._emit(identified_event, "error", str(exc), error_payload)
         finally:
             if started and not persistence_failed:
@@ -1184,6 +1439,23 @@ class PipelineController:
         log_tails: dict[str, str] = {}
         archive = getattr(outcome, "attempt_archive", None)
         if archive and archive.is_dir():
+            execution = archive / "execution.json"
+            if execution.is_file():
+                try:
+                    record = json.loads(execution.read_text(encoding="utf-8-sig"))
+                except (OSError, json.JSONDecodeError):
+                    record = {}
+                diagnostics.update(
+                    {
+                        "executable": record.get("executable"),
+                        "argv": record.get("argv"),
+                        "cwd": record.get("cwd"),
+                        "pid": record.get("pid"),
+                        "exit_code": record.get("return_code"),
+                        "launch_exception": record.get("launch_exception"),
+                        "execution_json": str(execution),
+                    }
+                )
             for log in sorted(archive.rglob("*.log")):
                 try:
                     content = log.read_text(encoding="utf-8", errors="replace").strip()
@@ -1194,6 +1466,23 @@ class PipelineController:
                 if len(log_tails) == 4:
                     break
         diagnostics["worker_log_tails"] = log_tails
+        try:
+            from .portable import CORE_VERSION, doctor_report, load_manifest
+
+            runtime_manifest = load_manifest()
+            diagnostics.update(
+                {
+                    "core_version": CORE_VERSION,
+                    "runtime_manifest_schema": runtime_manifest.get("schema_version"),
+                    "runtime_versions": {
+                        str(item["component_id"]): str(item["version"])
+                        for item in runtime_manifest.get("components", [])
+                    },
+                    "runtime_doctor": doctor_report(full=False).payload(),
+                }
+            )
+        except Exception as exc:
+            diagnostics["runtime_diagnostics_error"] = f"{type(exc).__name__}: {exc}"
         return diagnostics
 
     def _worker_failure(
@@ -1350,13 +1639,13 @@ class PipelineController:
         state = self._stage(project, "train", event)
         manifest = self._manifest("train_gsplat")
         reconstruction = "recon.mapanything" if project.stages.get("fallback", StageState()).status == "succeeded" else "recon.colmap"
-        request = StageRequest(run_id=project.run_id or "p2", stage_id="train", stage_kind=StageKind.TRAINING, plugin_id=manifest.plugin_id, plugin_version=manifest.plugin_version, profile=ExecutionProfile.PRODUCTION, config={"config_version": "train-gsplat/v1", "scene_id": "scene", "data_dir": str(data_dir), "dataset_manifest": str(data_dir / "dataset.manifest.json"), "gsplat_source": str(self.runtime.gsplat_source), "data_factor": 1, "max_steps": PROFILES[project.profile]["steps"], "seed": 42, "sh_degree": 3, "sh_degree_interval": 500, "minimum_psnr_gain_db": -5.0, "reconstruction_plugin_id": reconstruction})
+        request = StageRequest(run_id=project.run_id or "p2", stage_id="train", stage_kind=StageKind.TRAINING, plugin_id=manifest.plugin_id, plugin_version=manifest.plugin_version, profile=ExecutionProfile.PRODUCTION, config={"config_version": "train-gsplat/v1", "scene_id": "scene", "data_dir": str(data_dir), "dataset_manifest": str(data_dir / "dataset.manifest.json"), "gsplat_source": str(self.runtime.gsplat_source), "lpips_alexnet_checkpoint": str(self.runtime.lpips_alexnet_checkpoint), "data_factor": 1, "max_steps": PROFILES[project.profile]["steps"], "seed": 42, "sh_degree": 3, "sh_degree_interval": 500, "minimum_psnr_gain_db": -5.0, "reconstruction_plugin_id": reconstruction})
         outcome = self._run_worker(project, manifest, request, self.runtime.gsplat_python, token)
         self._raise_if_cancelled(token)
         if outcome.result.status is not StageStatus.SUCCEEDED:
             if token.is_cancelled:
                 raise InterruptedError(token.reason)
-            raise RuntimeError(outcome.result.error.message if outcome.result.error else "gsplat worker failed")
+            raise self._worker_failure("train", outcome, event)
         state.artifact_paths, state.metrics = [str(item.path) for item in outcome.committed_artifacts], outcome.result.quality_report.metrics if outcome.result.quality_report else {}
         if state.metrics.get("psnr_gain_db", 0.0) < 0.0:
             project.warnings.append("Training holdout PSNR did not improve; the artifact remains available for diagnosis.")

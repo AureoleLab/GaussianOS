@@ -177,6 +177,18 @@ class SubprocessWorkerRunner:
 
         command = self._build_command(manifest, request_path, result_path)
         env = os.environ.copy()
+        # A portable Worker must not inherit a developer Python/Conda context.
+        # Explicit Runtime interpreters remain self-contained; Windows and CUDA
+        # system DLL discovery still use the ordinary PATH below.
+        for variable in (
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "PYTHONSTARTUP",
+            "PYTHONUSERBASE",
+            "VIRTUAL_ENV",
+            "CONDA_PREFIX",
+        ):
+            env.pop(variable, None)
         env.update(manifest.entrypoint.environment)
         env.update(
             {
@@ -187,8 +199,13 @@ class SubprocessWorkerRunner:
                 # Never let imports add or rewrite __pycache__ inside them or
                 # the next doctor run would report self-inflicted corruption.
                 "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONNOUSERSITE": "1",
             }
         )
+        executable_parent = str(Path(command[0]).resolve().parent)
+        env["PATH"] = os.pathsep.join(
+            [executable_parent, env.get("PATH", "")]
+        ).rstrip(os.pathsep)
 
         execution_record: dict[str, Any] = {
             "schema_version": "gaussianos-worker-execution/v1",
@@ -210,6 +227,7 @@ class SubprocessWorkerRunner:
                 "GAUSSIAN_FACTORY_ATTEMPT_DIR": str(attempt.path),
                 "GAUSSIAN_FACTORY_PROFILE": request.profile.value,
                 "PYTHONDONTWRITEBYTECODE": env["PYTHONDONTWRITEBYTECODE"],
+                "PYTHONNOUSERSITE": env["PYTHONNOUSERSITE"],
                 "PATH": env.get("PATH"),
                 "PYTHONHOME": env.get("PYTHONHOME"),
                 "PYTHONPATH": env.get("PYTHONPATH"),
@@ -247,6 +265,7 @@ class SubprocessWorkerRunner:
                     cancellation_token,
                 )
         except OSError as exc:
+            launch_code, launch_kind = self._classify_launch_failure(exc)
             execution_record.update(
                 {
                     "state": "launch_failed",
@@ -259,12 +278,19 @@ class SubprocessWorkerRunner:
             result = self._failure_result(
                 request,
                 started_at,
-                ErrorCode.DEPENDENCY_MISSING,
-                f"worker process could not start: {exc}",
-                retryable=False,
-                details=self._failure_diagnostics(
-                    execution_record, stdout_path, stderr_path
+                launch_code,
+                (
+                    f"worker process could not start: {exc}. "
+                    "Check the verified package for incomplete extraction or antivirus quarantine; do not install Python or change PATH."
                 ),
+                retryable=False,
+                details={
+                    **self._failure_diagnostics(
+                        execution_record, stdout_path, stderr_path
+                    ),
+                    "failure_kind": launch_kind,
+                    "winerror": getattr(exc, "winerror", None),
+                },
             )
             archive = self._finish_failure(attempt, result, return_code)
             return ExecutionOutcome(result, attempt_archive=archive, return_code=return_code)
@@ -345,6 +371,18 @@ class SubprocessWorkerRunner:
 
         assert result is not None
         if result.status is not StageStatus.SUCCEEDED:
+            if result.error is not None:
+                details = self._failure_diagnostics(
+                    execution_record, stdout_path, stderr_path
+                )
+                details.update(result.error.details)
+                result = result.model_copy(
+                    update={
+                        "error": result.error.model_copy(
+                            update={"details": details}
+                        )
+                    }
+                )
             archive = self._finish_failure(attempt, result, return_code)
             return ExecutionOutcome(result, attempt_archive=archive, return_code=return_code)
         if return_code != 0:
@@ -585,7 +623,40 @@ class SubprocessWorkerRunner:
             return ErrorCode.CUDA_OOM
         if "no module named" in lowered or "module not found" in lowered:
             return ErrorCode.DEPENDENCY_MISSING
+        dependency_signatures = (
+            "dll load failed",
+            "specified module could not be found",
+            "winerror 126",
+            "0xc0000135",
+            "0xc000007b",
+            "%1 is not a valid win32 application",
+        )
+        if return_code in {-1073741515, -1073741701} or any(
+            signature in lowered for signature in dependency_signatures
+        ):
+            return ErrorCode.DEPENDENCY_MISSING
+        security_signatures = (
+            "operation did not complete successfully because the file contains a virus",
+            "potentially unwanted software",
+            "blocked by group policy",
+            "0x800700e1",
+        )
+        if any(signature in lowered for signature in security_signatures):
+            return ErrorCode.SECURITY_BLOCKED
         return ErrorCode.WORKER_CRASHED
+
+    @staticmethod
+    def _classify_launch_failure(exc: OSError) -> tuple[ErrorCode, str]:
+        lowered = str(exc).casefold()
+        winerror = getattr(exc, "winerror", None)
+        if winerror in {5, 225, 1260} or any(
+            signature in lowered
+            for signature in ("virus", "potentially unwanted", "group policy", "blocked")
+        ):
+            return ErrorCode.SECURITY_BLOCKED, "security_or_antivirus_block"
+        if winerror in {193, 216} or "valid win32 application" in lowered:
+            return ErrorCode.DEPENDENCY_MISSING, "wrong_executable_architecture"
+        return ErrorCode.DEPENDENCY_MISSING, "missing_or_quarantined_executable"
 
     @staticmethod
     def _failure_result(

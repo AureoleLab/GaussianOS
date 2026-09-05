@@ -19,17 +19,10 @@ import numpy as np
 from packages.exportkit import PlyFormatError, read_gaussian_ply_document, read_pointcloud_ply
 from packages.scene_bundle import GaussianTensors, PointCloudTensors, load_scene_bundle
 
-
-# SceneBundle stores OpenCV-style axes (x right, y down, z forward).  The
-# renderer exposes a conventional right-handed Y-up world.  This is the only
-# root transform used by the Viewer and is applied uniformly to Gaussians,
-# points and camera geometry.
-SCENE_ROOT_TRANSFORM = np.asarray(
-    ((1.0, 0.0, 0.0, 0.0),
-     (0.0, -1.0, 0.0, 0.0),
-     (0.0, 0.0, -1.0, 0.0),
-     (0.0, 0.0, 0.0, 1.0)),
-    dtype=np.float64,
+from .scene_placement import (
+    BLENDER_TARGET_COORDINATE_SYSTEM,
+    normalize_scene_placement,
+    world_from_scene,
 )
 
 
@@ -52,6 +45,10 @@ class ViewerScene:
     initial_focus_distance: float | None
     scene_root_transform: tuple[tuple[float, float, float, float], ...]
     canonical_world_up: tuple[float, float, float]
+    scene_placement: dict[str, Any]
+    target_coordinate_system: dict[str, str]
+    world_unit: str
+    has_metric_scale: bool
     project_id: str = ""
     run_id: str | None = None
     generation: int = 0
@@ -181,6 +178,7 @@ def load_viewer_scene(
     project_id: str = "",
     run_id: str | None = None,
     generation: int = 0,
+    scene_placement: object | None = None,
 ) -> ViewerScene:
     """Validate and describe a SceneBundle + graphdeco-gs-v1 PLY pair."""
     bundle_file = Path(bundle_path).resolve()
@@ -274,6 +272,25 @@ def load_viewer_scene(
                 })
             camera_records = tuple(normalized)
 
+    if not camera_records and bundle.cameras is not None:
+        camera_records = tuple(
+            {
+                "image_id": index + 1,
+                "colmap_image_id": index + 1,
+                "image_name": f"camera_{index + 1:06d}",
+                "cam2world": bundle.cameras.camtoworlds[index].astype(
+                    np.float64
+                ).tolist(),
+                "intrinsics": bundle.cameras.intrinsics[index].astype(
+                    np.float64
+                ).tolist(),
+                "width": int(bundle.cameras.image_sizes[index][0]),
+                "height": int(bundle.cameras.image_sizes[index][1]),
+                "coordinate_space": "scene_normalized",
+            }
+            for index in range(len(bundle.cameras.camtoworlds))
+        )
+
     cameras: tuple[tuple[float, float, float], ...] = ()
     initial_position = initial_forward = initial_up = None
     initial_focus = None
@@ -306,6 +323,7 @@ def load_viewer_scene(
     # useful reconstruction to a speck on first open.
     low = np.quantile(gaussians.means, 0.01, axis=0)
     high = np.quantile(gaussians.means, 0.99, axis=0)
+    placement = normalize_scene_placement(scene_placement)
     return ViewerScene(
         bundle_path=bundle_file,
         gaussian_path=gaussian_file,
@@ -322,10 +340,12 @@ def load_viewer_scene(
         initial_camera_forward=initial_forward,
         initial_camera_up=initial_up,
         initial_focus_distance=initial_focus,
-        scene_root_transform=tuple(
-            tuple(float(value) for value in row) for row in SCENE_ROOT_TRANSFORM
-        ),
-        canonical_world_up=(0.0, 1.0, 0.0),
+        scene_root_transform=world_from_scene(placement),
+        canonical_world_up=(0.0, 0.0, 1.0),
+        scene_placement=placement,
+        target_coordinate_system=dict(BLENDER_TARGET_COORDINATE_SYSTEM),
+        world_unit=bundle.manifest.world_unit,
+        has_metric_scale=bundle.manifest.has_metric_scale,
         project_id=project_id,
         run_id=run_id,
         generation=generation,

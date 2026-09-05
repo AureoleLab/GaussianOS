@@ -39,11 +39,13 @@ def test_viewer_loads_validated_bundle_ply_and_camera_track(tmp_path, manifest_f
     assert scene.pointcloud_bytes is not None
     assert scene.scene_root_transform == (
         (1.0, 0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0, 0.0),
         (0.0, -1.0, 0.0, 0.0),
-        (0.0, 0.0, -1.0, 0.0),
         (0.0, 0.0, 0.0, 1.0),
     )
-    assert scene.canonical_world_up == (0.0, 1.0, 0.0)
+    assert scene.canonical_world_up == (0.0, 0.0, 1.0)
+    assert scene.target_coordinate_system["z_axis"] == "up"
+    assert scene.scene_placement["scale_xyz"] == [1.0, 1.0, 1.0]
     assert scene.project_id == "project-a"
     assert scene.run_id == "run-a"
     assert scene.generation == 7
@@ -154,16 +156,71 @@ def test_gaussian_activation_rejects_zero_quaternion():
 
 
 def test_web_viewer_exposes_real_camera_and_free_view_bridge() -> None:
-    html = (Path(__file__).parents[2] / "apps" / "desktop" / "viewer_web" / "index.html").read_text(encoding="utf-8")
-    assert "window.viewerCamera={setCamera:setCameraByImageId,setFreeView:freeView" in html
-    assert "cameraProjection(currentCamera)" in html
-    assert "currentCamera.width/currentCamera.height" in html
-    assert "highlightCamera(rec)" in html
-    assert "uniform mat4 sceneRoot,view,proj" in html
-    assert "gl.uniformMatrix4fv(gl.getUniformLocation(lineP,'sceneRoot')" in html
-    assert "gl.uniformMatrix4fv(gl.getUniformLocation(splatP,'sceneRoot')" in html
-    assert "rollDot:dot(c.r,worldUp)" in html
-    assert "worldUp=norm(meta.initial_camera_up)" not in html
+    web = Path(__file__).parents[2] / "apps" / "desktop" / "viewer_web"
+    html = (web / "index.html").read_text(encoding="utf-8")
+    javascript = (web / "viewer.js").read_text(encoding="utf-8")
+    assert "viewer.js" in html
+    assert "window.viewerCamera" in javascript
+    assert "setCamera: setCameraByImageId" in javascript
+    assert "cameraProjection(currentCamera)" in javascript
+    assert "currentCamera.width / currentCamera.height" in javascript
+    assert "highlightCamera(record)" in javascript
+    assert "uniform mat4 sceneRoot,view,proj" in javascript
+    assert "inverse(mat3(sceneRoot))" in javascript
+    assert "rollDot: dot(c.r, worldUp)" in javascript
+    assert "worldUp = [0, 0, 1]" in javascript
+
+
+def test_web_viewer_exposes_world_overlays_transform_api_and_bridge() -> None:
+    web = Path(__file__).parents[2] / "apps" / "desktop" / "viewer_web"
+    html = (web / "index.html").read_text(encoding="utf-8")
+    javascript = (web / "viewer.js").read_text(encoding="utf-8")
+    for marker in ("showGrid", "showAxes", "showC", "showPath", "navGizmo"):
+        assert f'id="{marker}"' in html
+    for api in ("setAppearance", "setTool", "setPlacement", "snapView"):
+        assert api in javascript
+    assert "commitScenePlacement(JSON.stringify(placement))" in javascript
+    assert "BLENDER_FROM_SCENE" in javascript
+    assert "rawMeans" in javascript
+
+
+def test_web_viewer_draws_pointcloud_as_points_without_spurious_segments() -> None:
+    web = Path(__file__).parents[2] / "apps" / "desktop" / "viewer_web"
+    html = (web / "index.html").read_text(encoding="utf-8")
+    javascript = (web / "viewer.js").read_text(encoding="utf-8")
+
+    assert "pointProgram" in javascript
+    assert "makePointVAO(output)" in javascript
+    assert "gl.drawArrays(gl.POINTS, 0, vertices)" in javascript
+    assert "drawLines(pointVAO" not in javascript
+    assert '<input id="showP" type="checkbox">' in html
+
+
+def test_web_viewer_camera_overlay_and_depth_state_are_stable() -> None:
+    javascript = (
+        Path(__file__).parents[2] / "apps" / "desktop" / "viewer_web" / "viewer.js"
+    ).read_text(encoding="utf-8")
+
+    assert "cameraOverlay: 'selected'" in javascript
+    assert "showCameraPath: false" in javascript
+    assert "showPoints: false" in javascript
+    assert "appearance.cameraOverlay === 'all'" in javascript
+    assert "appearance.cameraOverlay !== 'off'" in javascript
+    assert "selectedCamera = record" in javascript
+    free_view = javascript.split("function freeView()", 1)[1].split("function ", 1)[0]
+    assert "currentCamera = null" in free_view
+    assert "selectedCamera = null" not in free_view
+    assert "gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL); gl.depthMask(false)" in javascript
+    assert "gl.disable(gl.DEPTH_TEST)" not in javascript
+    assert "renderPassVertices" in javascript
+
+
+def test_backend_routes_loaded_scene_to_bundled_web_viewer() -> None:
+    backend = (Path(__file__).parents[2] / "apps" / "desktop" / "main.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'self.viewer_url = f"gaussian://viewer/index.html?v={self.viewer_revision}"' in backend
+    assert "data-probe" not in backend
 
 
 def test_qml_file_urls_support_string_drop_payloads() -> None:

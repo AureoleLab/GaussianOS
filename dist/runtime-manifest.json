@@ -118,8 +118,8 @@
       "platform": "windows",
       "architecture": "x86_64",
       "relative_install_path": "sources/gsplat-v1.5.3",
-      "installed_size_bytes": 130807317,
-      "tree_sha256": "677994d95641a62600de62f1225de2f8a0968942af4717b97faa1b1a74d8101a",
+      "installed_size_bytes": 24974664,
+      "tree_sha256": "4dd5388a0225b00e62bcb114a074c446b2129797957612a4d8eb0f8d2eac99d0",
       "dependencies": [],
       "required": true,
       "source": {
@@ -180,8 +180,8 @@
       "platform": "windows",
       "architecture": "x86_64",
       "relative_install_path": "sources/map-anything-v1.1.2",
-      "installed_size_bytes": 17143627,
-      "tree_sha256": "32659a54a48ed75ea9b42e2c01daa89d59cc6d4e6ea6b09e1d862d2e6d995eb9",
+      "installed_size_bytes": 9778357,
+      "tree_sha256": "96163db66fd182901a7c6671203a492e184a64c3e05f4d7252bb0b1bb5654875",
       "dependencies": [],
       "required": true,
       "source": {
@@ -236,8 +236,8 @@
       "platform": "windows",
       "architecture": "x86_64",
       "relative_install_path": "sources/dinov2-7764ea0",
-      "installed_size_bytes": 6671143,
-      "tree_sha256": "0dd84deca6fb81854c3970d9fc1d2d5bcb005d765a9077a4fe260823adee23fe",
+      "installed_size_bytes": 2201601,
+      "tree_sha256": "8371ed3af8ec272adb6630eb74b73170852b863a76212b820689f0c74320c048",
       "dependencies": [],
       "required": true,
       "source": {
@@ -291,6 +291,42 @@
           "type": "file",
           "size_bytes": 5776,
           "sha256": "65701d09d99ed37a21d295f0d138978b3d584ab3bccdbcb4a2853da212b676c5"
+        }
+      ]
+    },
+    {
+      "component_id": "lpips-alexnet-model",
+      "version": "alexnet-imagenet1k-7be5be79",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "relative_install_path": "downloads/lpips-alexnet",
+      "installed_size_bytes": 244408911,
+      "tree_sha256": "c44ead947208b42b1a12e222055fac7f82451d38e79ac3e18e83dba143abcd47",
+      "dependencies": [
+        "gsplat-environment"
+      ],
+      "required": true,
+      "source": {
+        "kind": "download",
+        "url": "https://download.pytorch.org/models/alexnet-owt-7be5be79.pth",
+        "offline_bundle": "GaussianOS-Offline-Runtime-win-x64",
+        "artifact": {
+          "filename": "alexnet-owt-7be5be79.pth",
+          "size_bytes": 244408911,
+          "sha256": "7be5be791159472b1fbf3c69796f7cb30dca7ad8466c2df70058c37116cdee02",
+          "archive": "file",
+          "install_as": "checkpoints/alexnet-owt-7be5be79.pth"
+        }
+      },
+      "compatible_gaussianos_versions": [
+        "0.1.0-alpha"
+      ],
+      "verification": [
+        {
+          "path": "checkpoints/alexnet-owt-7be5be79.pth",
+          "type": "file",
+          "size_bytes": 244408911,
+          "sha256": "7be5be791159472b1fbf3c69796f7cb30dca7ad8466c2df70058c37116cdee02"
         }
       ]
     },

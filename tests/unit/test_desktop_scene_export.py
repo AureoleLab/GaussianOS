@@ -13,6 +13,7 @@ from apps.desktop.scene_export import (
     SceneExportError,
     validate_scene_export,
 )
+from apps.desktop.scene_placement import world_from_scene
 from packages.contracts import NormalizationTransform
 from packages.exportkit import (
     read_gaussian_ply_payload,
@@ -224,10 +225,74 @@ def test_complete_scene_bundle_export_round_trip_and_alignment(
     assert manifest["project_id"] == project.project_id
     assert manifest["run_id"] == project.run_id
     assert manifest["world_from_reconstruction"] == transform.tolist()
-    assert manifest["world_transform_applied"]["viewer_display_transform"] == "not_applied"
+    assert manifest["schema_version"] == "gaussianos-scene-export/v2"
+    assert manifest["target_coordinate_system"]["z_axis"] == "up"
+    assert manifest["scene_placement"]["translation"] == [0.0, 0.0, 0.0]
+    assert manifest["world_from_scene"] == [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    assert manifest["world_transform_applied"]["scene_placement"] == "declared_not_baked"
     assert set(manifest["sha256"]) == {
         value for value in manifest["files"].values()
     }
+
+
+def test_scene_export_declares_project_placement_without_baking_payloads(
+    tmp_path, manifest_factory, gaussian_factory, cameras
+):
+    store, project, gaussians, _, _ = _ready_project(
+        tmp_path, manifest_factory, gaussian_factory, cameras
+    )
+    project.scene_placement = {
+        "translation": [4.0, -2.0, 1.5],
+        "rotation_xyz_degrees": [10.0, 20.0, 30.0],
+        "scale_xyz": [2.0, 3.0, 4.0],
+        "scale_locked": False,
+    }
+    store.save(project)
+    parent = tmp_path / "placed-export"
+    parent.mkdir()
+
+    result = SceneBundleExporter(store).export(project.project_id, project.run_id, parent)
+    verified = validate_scene_export(result.path)
+    manifest = verified["manifest"]
+
+    np.testing.assert_allclose(
+        manifest["world_from_scene"], world_from_scene(project.scene_placement)
+    )
+    restored = read_gaussian_ply_payload(
+        result.path / "gaussian" / "scene_gaussian.ply"
+    )
+    for field in ("means", "log_scales", "quats_wxyz", "opacity_logits", "sh_coeffs"):
+        np.testing.assert_array_equal(getattr(restored, field), getattr(gaussians, field))
+
+
+def test_scene_export_validator_keeps_legacy_v1_compatibility(
+    tmp_path, manifest_factory, gaussian_factory, cameras
+):
+    store, project, _, _, _ = _ready_project(
+        tmp_path, manifest_factory, gaussian_factory, cameras
+    )
+    parent = tmp_path / "legacy-validation"
+    parent.mkdir()
+    result = SceneBundleExporter(store).export(project.project_id, project.run_id, parent)
+    manifest_path = result.path / "scene_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = "gaussianos-scene-export/v1"
+    for key in ("target_coordinate_system", "scene_placement", "world_from_scene"):
+        manifest.pop(key)
+    manifest["world_transform_applied"] = {
+        "gaussian": "already_in_scene_world",
+        "pointcloud": "world_from_reconstruction",
+        "cameras": "already_in_scene_world",
+        "viewer_display_transform": "not_applied",
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert validate_scene_export(result.path)["manifest"]["schema_version"].endswith("/v1")
 
 
 def test_export_rejects_cross_project_and_stale_run(

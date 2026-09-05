@@ -17,6 +17,7 @@ from uuid import uuid4
 from packages.file_lock import FileLock, ProjectLockError
 
 from .project_paths import PROJECT_MARKER, ProjectPaths, isolated_workspace
+from .scene_placement import default_scene_placement, normalize_scene_placement
 
 
 REPLACE_BACKOFF_SECONDS = (0.05, 0.1, 0.2, 0.4, 0.8)
@@ -109,6 +110,7 @@ class Project:
     sampling: dict[str, Any] = field(default_factory=dict)
     stages: dict[str, StageState] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    scene_placement: dict[str, Any] = field(default_factory=default_scene_placement)
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
     library_root: str | None = None
@@ -122,7 +124,15 @@ class Project:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "Project":
         stages = {name: StageState(**state) for name, state in value.get("stages", {}).items()}
-        return cls(**{**value, "stages": stages})
+        return cls(
+            **{
+                **value,
+                "stages": stages,
+                "scene_placement": normalize_scene_placement(
+                    value.get("scene_placement")
+                ),
+            }
+        )
 
 
 @dataclass(frozen=True, slots=True)

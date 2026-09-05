@@ -76,7 +76,8 @@ $directComponents = @(
     'envs\gsplat-1.5.3',
     'envs\mapanything-1.1.2',
     'downloads\map-anything-apache-00f9c245',
-    'downloads\dinov2-7764ea0'
+    'downloads\dinov2-7764ea0',
+    'downloads\lpips-alexnet'
 )
 foreach ($component in $directComponents) {
     if ($Resume -and $component -in $CompletedComponentPath) {

@@ -42,6 +42,8 @@ REQUIRED_APPLICATION_PATHS = (
     "_internal/apps/desktop/qml/modern/Main.qml",
     "_internal/apps/desktop/qml/classic/Main.qml",
     "_internal/apps/desktop/viewer_web/index.html",
+    "_internal/apps/desktop/viewer_web/viewer.css",
+    "_internal/apps/desktop/viewer_web/viewer.js",
 )
 
 

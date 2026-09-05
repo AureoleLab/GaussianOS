@@ -41,12 +41,20 @@ if (Test-Path -LiteralPath (Join-Path $runtimeSource 'Runtime')) {
     throw "Offline Runtime contains forbidden Runtime\Runtime nesting."
 }
 
-function Copy-Tree([string]$Source, [string]$Destination) {
+function Copy-Tree(
+    [string]$Source,
+    [string]$Destination,
+    [switch]$ExcludePythonCache
+) {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    & robocopy.exe `
-        $Source `
-        $Destination `
-        /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NP | Out-Host
+    $copyArguments = @(
+        $Source, $Destination,
+        '/E', '/COPY:DAT', '/DCOPY:DAT', '/R:2', '/W:1', '/NFL', '/NDL', '/NP'
+    )
+    if ($ExcludePythonCache) {
+        $copyArguments += @('/XD', '__pycache__', '/XF', '*.pyc')
+    }
+    & robocopy.exe @copyArguments | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed ($LASTEXITCODE): $Source"
     }
@@ -64,7 +72,15 @@ if (Test-Path -LiteralPath $package) {
 }
 New-Item -ItemType Directory -Force -Path $package | Out-Null
 Copy-Tree $core $package
-Copy-Tree $runtimeSource (Join-Path $package 'Runtime')
+Copy-Tree $runtimeSource (Join-Path $package 'Runtime') -ExcludePythonCache
+
+$runtimeCaches = @(Get-ChildItem -LiteralPath (Join-Path $package 'Runtime') `
+    -Recurse -Force -ErrorAction Stop | Where-Object {
+        $_.Name -eq '__pycache__' -or $_.Extension -eq '.pyc'
+    })
+if ($runtimeCaches.Count -ne 0) {
+    throw "Full Offline Runtime contains generated Python cache files."
+}
 
 if (Test-Path -LiteralPath (Join-Path $package 'Runtime\Runtime')) {
     throw 'Full Offline package contains forbidden Runtime\Runtime nesting.'
@@ -80,6 +96,7 @@ foreach ($required in @(
     'Start_GaussianOS.bat',
     'Start_GaussianOS_Classic.bat',
     'Doctor.ps1',
+    'Generate_Diagnostics.bat',
     'Runtime_Manager.ps1',
     'runtime-manifest.json'
 )) {
@@ -109,6 +126,7 @@ try {
     --feature 'ModernUI and ClassicUI' `
     --feature 'Qt QML and WebEngine Viewer' `
     --feature 'COLMAP, MapAnything, gsplat, FFmpeg, models and tools' `
+    --feature 'privacy-safe one-click diagnostic ZIP' `
     --feature 'single-folder offline launch'
 if ($LASTEXITCODE -ne 0) {
     throw 'Full Offline build manifest generation failed.'
@@ -130,12 +148,16 @@ if (-not $SkipArchive) {
         if ($LASTEXITCODE -ne 0) {
             throw 'Full Offline compression failed.'
         }
+        & $sevenZipCommand t $archive | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Full Offline archive integrity test failed.'
+        }
     } finally {
         Pop-Location
     }
 }
 
-$files = @(Get-ChildItem -LiteralPath $package -Recurse -File)
+$files = @(Get-ChildItem -LiteralPath $package -Recurse -File -Force)
 $summary = [ordered]@{
     product = 'GaussianOS Full Offline'
     package_directory = $package

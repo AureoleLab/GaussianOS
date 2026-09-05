@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtQuick.LocalStorage
 import QtWebEngine
+import QtWebChannel
 import QtMultimedia
 import "components"
 
@@ -868,6 +869,14 @@ ApplicationWindow {
                     : ""
             }
             GfButton { tokens: theme; text: "Reset Workspace Layout"; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.fillWidth: true; onClicked: resetLayout() }
+            GfButton {
+                tokens: theme
+                text: "Generate Diagnostic ZIP"
+                Layout.leftMargin: 22
+                Layout.rightMargin: 22
+                Layout.fillWidth: true
+                onClicked: backend.generateDiagnostics()
+            }
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.divider }
             Text { text: "Runtime paths are discovered from the locked P2 environment.\nRenderer: Qt WebEngine · WebGL2"; color: theme.textSecondary; Layout.leftMargin: 22; lineHeight: 1.45 }
             RowLayout { Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 18
@@ -1324,6 +1333,7 @@ ApplicationWindow {
                                 width: Math.min(parent.width - 2, (parent.height - 2) * sourceAspect)
                                 height: Math.min(parent.height - 2, (parent.width - 2) / sourceAspect)
                                 url: backend ? backend.viewerUrl : "about:blank"
+                                webChannel: WebChannel { registeredObjects: [viewerBridge] }
                                 focus: true
                                 onTitleChanged: if (backend) backend.viewerPageTitle(title)
                             }

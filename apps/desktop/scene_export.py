@@ -2,8 +2,8 @@
 
 The training SceneBundle is authoritative for Gaussian and camera space.  The
 reconstruction point cloud is transformed exactly once with the training
-manifest's source-to-scene transform; Viewer presentation transforms are never
-consulted.
+manifest's source-to-scene transform.  Project placement remains a declared,
+non-destructive root matrix so Gaussian SH payloads are never rewritten.
 """
 
 from __future__ import annotations
@@ -33,9 +33,15 @@ from packages.quality.colmap import read_images_txt
 from packages.scene_bundle import PointCloudTensors, load_scene_bundle
 
 from .project_store import Project, ProjectStore, StageState
+from .scene_placement import (
+    BLENDER_TARGET_COORDINATE_SYSTEM,
+    normalize_scene_placement,
+    world_from_scene,
+)
 
 
-EXPORT_SCHEMA_VERSION = "gaussianos-scene-export/v1"
+EXPORT_SCHEMA_VERSION = "gaussianos-scene-export/v2"
+LEGACY_EXPORT_SCHEMA_VERSION = "gaussianos-scene-export/v1"
 CAMERAS_SCHEMA_VERSION = "gaussianos-cameras/v1"
 _INVALID_FILENAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED = {
@@ -668,13 +674,31 @@ def _write_colmap(
 
 
 def validate_scene_export(directory: str | os.PathLike[str]) -> dict[str, Any]:
-    """Reload and integrity-check one committed export without display transforms."""
+    """Reload and integrity-check one committed export and its root transform."""
 
     root = Path(directory).resolve(strict=True)
     manifest_path = root / "scene_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != EXPORT_SCHEMA_VERSION:
+    schema_version = manifest.get("schema_version")
+    if schema_version not in {LEGACY_EXPORT_SCHEMA_VERSION, EXPORT_SCHEMA_VERSION}:
         raise SceneExportError("Unsupported scene export manifest.")
+    if schema_version == EXPORT_SCHEMA_VERSION:
+        try:
+            placement = normalize_scene_placement(manifest.get("scene_placement"))
+            declared = np.asarray(manifest.get("world_from_scene"), dtype=np.float64)
+            expected = np.asarray(world_from_scene(placement), dtype=np.float64)
+        except (TypeError, ValueError) as exc:
+            raise SceneExportError(f"Scene placement is invalid: {exc}") from exc
+        if (
+            declared.shape != (4, 4)
+            or not np.isfinite(declared).all()
+            or not np.allclose(declared[3], (0.0, 0.0, 0.0, 1.0))
+            or abs(float(np.linalg.det(declared[:3, :3]))) <= 1e-12
+            or not np.allclose(declared, expected, rtol=1e-9, atol=1e-9)
+        ):
+            raise SceneExportError("Scene root transform is invalid or inconsistent.")
+        if manifest.get("target_coordinate_system") != BLENDER_TARGET_COORDINATE_SYSTEM:
+            raise SceneExportError("Scene target coordinate system is invalid.")
     files = manifest.get("files")
     hashes = manifest.get("sha256")
     if not isinstance(files, dict) or not isinstance(hashes, dict):
@@ -751,6 +775,8 @@ class SceneBundleExporter:
             bundle.manifest.normalization_transform.source_to_scene,
             dtype=np.float64,
         )
+        placement = normalize_scene_placement(project.scene_placement)
+        scene_root = world_from_scene(placement)
         pointcloud = _transform_pointcloud(
             source_pointcloud, world_from_reconstruction
         )
@@ -811,11 +837,14 @@ class SceneBundleExporter:
                     "has_metric_scale": bundle.manifest.has_metric_scale,
                 },
                 "world_from_reconstruction": world_from_reconstruction.tolist(),
+                "target_coordinate_system": dict(BLENDER_TARGET_COORDINATE_SYSTEM),
+                "scene_placement": placement,
+                "world_from_scene": [list(row) for row in scene_root],
                 "world_transform_applied": {
                     "gaussian": "already_in_scene_world",
                     "pointcloud": "world_from_reconstruction",
                     "cameras": "already_in_scene_world",
-                    "viewer_display_transform": "not_applied",
+                    "scene_placement": "declared_not_baked",
                 },
                 "files": {
                     "gaussian": _PAYLOAD_PATHS[0],

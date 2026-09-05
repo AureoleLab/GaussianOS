@@ -51,6 +51,7 @@ try {
         --specpath $specRoot `
         --hidden-import PySide6.QtWebEngineCore `
         --hidden-import PySide6.QtWebEngineQuick `
+        --hidden-import PySide6.QtWebChannel `
         --add-data $qmlData `
         --add-data $viewerData `
         --add-data $configsData `
@@ -102,6 +103,7 @@ Copy-Item -LiteralPath `
     (Join-Path $root 'packaging\Start_GaussianOS.bat'), `
     (Join-Path $root 'packaging\Start_GaussianOS_Classic.bat'), `
     (Join-Path $root 'packaging\Doctor.ps1'), `
+    (Join-Path $root 'packaging\Generate_Diagnostics.bat'), `
     (Join-Path $root 'packaging\Runtime_Manager.ps1') `
     -Destination $package
 Copy-Item -LiteralPath $pruneReport -Destination (Join-Path $package 'prune-report.json')
@@ -128,6 +130,7 @@ Copy-Item -LiteralPath $auditReport -Destination (Join-Path $package 'package-au
     --feature 'Qt QML and WebEngine Viewer' `
     --feature 'Core-only project management and export access' `
     --feature 'Runtime detect/install/offline-import/verify/repair' `
+    --feature 'privacy-safe one-click diagnostic ZIP' `
     --prune-report $pruneReport
 if ($LASTEXITCODE -ne 0) {
     throw 'Portable Core build manifest generation failed.'

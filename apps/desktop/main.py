@@ -10,11 +10,18 @@ import argparse
 import json
 import sys
 import threading
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .pipeline import PipelineController, RuntimePaths, STAGES, TERMINAL_STAGE_STATES
+from .pipeline import (
+    PipelineController,
+    PipelineStartError,
+    RuntimePaths,
+    STAGES,
+    TERMINAL_STAGE_STATES,
+)
 from .directory_opening import DirectoryOpenResult, ProjectDirectoryService
 from .project_entries import project_display_path
 from .project_paths import ProjectPaths
@@ -28,6 +35,7 @@ from .project_session import AsyncIdentity, ProjectSession
 from .viewer import ViewerScene, load_viewer_scene
 from .sampling import discover_ffprobe
 from .scene_export import SceneBundleExporter
+from .scene_placement import normalize_scene_placement, world_from_scene
 from .ui_settings import UI_CHOICES, UiSettingsStore, resolve_ui
 from .video_import import VideoImportSession
 
@@ -77,7 +85,13 @@ def pipeline_terminal_event(project: Project) -> tuple[str, str]:
         return "complete", "Pipeline finished"
     if project.status == "interrupted":
         return "run_failed", "Pipeline interrupted"
-    return "run_failed", "Pipeline failed"
+    for name in reversed(STAGES):
+        state = project.stages.get(name)
+        if state is not None and state.error:
+            return "run_failed", f"{name}: {state.error}"
+    if project.warnings:
+        return "run_failed", project.warnings[-1]
+    return "run_failed", "Pipeline failed without a recorded reason"
 
 
 def _configure_application_identity(application: Any) -> None:
@@ -111,6 +125,7 @@ def main() -> int:
         prepare_environment,
         repair,
     )
+    from .diagnostics import create_diagnostic_bundle
 
     portable_layout = prepare_environment()
     parser = argparse.ArgumentParser(description="Gaussian Factory P2 desktop GUI")
@@ -179,6 +194,11 @@ def main() -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--doctor", action="store_true", help="check the portable runtime without starting the GUI")
+    parser.add_argument(
+        "--diagnostic-zip",
+        action="store_true",
+        help="create a privacy-safe support ZIP without starting the GUI",
+    )
     parser.add_argument("--runtime-list", action="store_true", help="list locked portable runtime assets")
     parser.add_argument("--runtime-install", action="append", default=[], metavar="ASSET_ID", help="download and verify a locked runtime asset")
     parser.add_argument("--runtime-install-all", action="store_true", help="download every runtime asset that has an approved URL")
@@ -312,6 +332,20 @@ def main() -> int:
         finally:
             if session is not None:
                 session.cancel()
+    if args.diagnostic_zip:
+        try:
+            destination = create_diagnostic_bundle(full=True)
+            print(f"GaussianOS diagnostic bundle: {destination}")
+            return 0
+        except Exception as exc:
+            portable_layout.logs.mkdir(parents=True, exist_ok=True)
+            failure = portable_layout.logs / "diagnostic-error.txt"
+            failure.write_text(
+                f"Diagnostic bundle failed: {type(exc).__name__}: {exc}\n",
+                encoding="utf-8",
+            )
+            print(f"Diagnostic bundle failed: {exc}", file=sys.stderr)
+            return 5
     if args.doctor:
         result = doctor_report(full=True)
         report = (
@@ -432,7 +466,15 @@ def main() -> int:
             super().__init__()
             self.scene: ViewerScene | None = None
             self._devices: set[QIODevice] = set()
-            self.html = (Path(__file__).with_name("viewer_web") / "index.html").read_bytes()
+            root = Path(__file__).with_name("viewer_web")
+            self.static_assets = {
+                "/index.html": (b"text/html", (root / "index.html").read_bytes()),
+                "/viewer.css": (b"text/css", (root / "viewer.css").read_bytes()),
+                "/viewer.js": (
+                    b"application/javascript",
+                    (root / "viewer.js").read_bytes(),
+                ),
+            }
 
         def set_scene(self, scene: ViewerScene) -> None:
             self.scene = scene
@@ -459,7 +501,11 @@ def main() -> int:
         def requestStarted(self, job: QWebEngineUrlRequestJob) -> None:
             path = job.requestUrl().path()
             if path in {"", "/", "/index.html"}:
-                self._reply_bytes(job, b"text/html", self.html); return
+                mime, payload = self.static_assets["/index.html"]
+                self._reply_bytes(job, mime, payload); return
+            if path in {"/viewer.css", "/viewer.js"}:
+                mime, payload = self.static_assets[path]
+                self._reply_bytes(job, mime, payload); return
             scene = self.scene
             if scene is None:
                 job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound); return
@@ -478,6 +524,10 @@ def main() -> int:
                     "initial_focus_distance": scene.initial_focus_distance,
                     "scene_root_transform": scene.scene_root_transform,
                     "canonical_world_up": scene.canonical_world_up,
+                    "scene_placement": scene.scene_placement,
+                    "target_coordinate_system": scene.target_coordinate_system,
+                    "world_unit": scene.world_unit,
+                    "has_metric_scale": scene.has_metric_scale,
                 }, separators=(",", ":")).encode()
                 self._reply_bytes(job, b"application/json", payload); return
             if path == "/scene.ply":
@@ -498,6 +548,7 @@ def main() -> int:
         activeUiChanged = Signal()
         event = Signal(str, str, object)
         acceptanceRequested = Signal()
+        scenePlacementApplied = Signal(str)
 
         def __init__(self) -> None:
             super().__init__()
@@ -520,6 +571,7 @@ def main() -> int:
             self.sampling_analysis: set[str] = set()
             self.import_session: VideoImportSession | None = None
             self.import_state: dict[str, Any] = {}
+            self.diagnostic_state: dict[str, Any] = {"status": "idle", "path": ""}
             self.import_analysis_running = False
             self.import_generation = 0
             self.import_target_project_id = ""
@@ -635,12 +687,13 @@ def main() -> int:
                 ensure_ascii=False,
             )
 
-        @Property(str, constant=True)
+        @Property(str, notify=changed)
         def runtimeJson(self) -> str:
             return json.dumps(
                 {
                     "status": "ok" if not runtime_messages else "attention",
                     "messages": runtime_messages,
+                    "diagnostic": self.diagnostic_state,
                 },
                 ensure_ascii=False,
             )
@@ -652,6 +705,46 @@ def main() -> int:
         @Property(str, notify=exportChanged)
         def exportJson(self) -> str:
             return json.dumps(self.export_state, ensure_ascii=False)
+
+        @Slot(str, result=bool)
+        def setScenePlacement(self, payload: str) -> bool:
+            project = self._project()
+            scene = viewer_handler.scene
+            if (
+                project is None
+                or scene is None
+                or scene.project_id != project.project_id
+                or scene.generation != self.session.generation
+            ):
+                self.logs.append("Scene placement ignored: no current validated viewer")
+                self.changed.emit()
+                return False
+            try:
+                placement = normalize_scene_placement(json.loads(payload))
+
+                def update(current: Project) -> None:
+                    if current.run_id != scene.run_id:
+                        raise ProjectStoreError("viewer run is stale")
+                    current.scene_placement = placement
+
+                updated, _ = store.update_project(project.project_id, update)
+                viewer_handler.set_scene(
+                    replace(
+                        scene,
+                        scene_placement=placement,
+                        scene_root_transform=world_from_scene(placement),
+                    )
+                )
+                self.projects = store.all()
+                normalized = json.dumps(placement, ensure_ascii=False, separators=(",", ":"))
+                self.scenePlacementApplied.emit(normalized)
+                self.logs.append("Scene root transform updated")
+                self.changed.emit()
+                return updated.scene_placement == placement
+            except (json.JSONDecodeError, OSError, TypeError, ValueError, ProjectStoreError) as exc:
+                self.logs.append(f"Scene placement update failed: {exc}")
+                self.changed.emit()
+                return False
 
         def _set_active_ui(self, value: str) -> None:
             if self.active_ui == value:
@@ -940,16 +1033,88 @@ def main() -> int:
                         generation=generation,
                     )
                     kind, message = pipeline_terminal_event(completed)
+                    terminal_details: dict[str, Any] = {}
+                    if kind == "run_failed" and completed.run_id:
+                        failure_log = (
+                            ProjectPaths.from_project(completed)
+                            .run(completed.run_id)
+                            .logs
+                            / "pipeline-error.json"
+                        )
+                        try:
+                            payload = json.loads(
+                                failure_log.read_text(encoding="utf-8-sig")
+                            )
+                            if isinstance(payload, dict):
+                                terminal_details.update(payload)
+                        except (OSError, json.JSONDecodeError):
+                            terminal_details["logs_path"] = str(failure_log.parent)
                     self.event.emit(
                         kind,
                         message,
-                        {**identity, "status": completed.status},
+                        {
+                            **identity,
+                            "status": completed.status,
+                            "failure_phase": "run",
+                            **terminal_details,
+                        },
                     )
                 except Exception as exc:
-                    self.event.emit("run_failed", str(exc), identity)
+                    details: dict[str, Any] = {
+                        **identity,
+                        "failure_phase": "start",
+                        "failure_kind": getattr(exc, "failure_kind", "pipeline_start"),
+                        "error_code": getattr(exc, "error_code", type(exc).__name__),
+                    }
+                    diagnostics = getattr(exc, "diagnostics", None)
+                    if isinstance(diagnostics, dict):
+                        details.update(diagnostics)
+                    try:
+                        diagnostic = create_diagnostic_bundle(
+                            full=False,
+                            project_roots=(store.paths(project).workspace,),
+                            include_worker_probes=False,
+                        )
+                        details["diagnostic_bundle"] = str(diagnostic)
+                    except Exception as diagnostic_exc:
+                        details["diagnostic_error"] = (
+                            f"{type(diagnostic_exc).__name__}: {diagnostic_exc}"
+                        )
+                    self.event.emit("run_failed", str(exc), details)
             threading.Thread(target=run, name=f"gaussian-run-{project_id[:8]}", daemon=True).start()
             self.logs.append("Pipeline queued")
             self._refresh()
+
+        @Slot()
+        def generateDiagnostics(self) -> None:
+            if self.diagnostic_state.get("status") == "running":
+                return
+            self.diagnostic_state = {"status": "running", "path": ""}
+            self.logs.append("Diagnostic bundle generation started")
+            self.changed.emit()
+
+            def generate() -> None:
+                try:
+                    project = self._project()
+                    roots = (store.paths(project).workspace,) if project else ()
+                    destination = create_diagnostic_bundle(
+                        full=True, project_roots=roots
+                    )
+                    self.event.emit(
+                        "diagnostic_ready",
+                        f"Diagnostic ZIP ready: {destination}",
+                        {"path": str(destination)},
+                    )
+                except Exception as exc:
+                    self.event.emit(
+                        "diagnostic_failed",
+                        f"Diagnostic ZIP failed: {exc}",
+                        {"error_code": type(exc).__name__},
+                    )
+
+            threading.Thread(
+                target=generate, name="gaussian-diagnostics", daemon=True
+            ).start()
 
         @Slot()
         def cancel(self) -> None:
@@ -1053,6 +1218,7 @@ def main() -> int:
                             project_id=project_id,
                             run_id=run_id,
                             generation=generation,
+                            scene_placement=project.scene_placement,
                         )
                         self.event.emit(
                             "viewer_ready",
@@ -1546,11 +1712,41 @@ def main() -> int:
                     self.loadViewer()
                 return
             elif kind == "run_failed":
-                self._clear_project_presentation(f"Pipeline could not start: {message}")
+                prefix = (
+                    "Pipeline could not start"
+                    if data.get("failure_phase") == "start"
+                    else "Pipeline failed"
+                )
+                diagnostic = data.get("diagnostic_bundle")
+                suffix = f"\nDiagnostic ZIP: {diagnostic}" if diagnostic else ""
+                self._clear_project_presentation(f"{prefix}: {message}{suffix}")
+            elif kind == "diagnostic_ready":
+                self.diagnostic_state = {
+                    "status": "ready",
+                    "path": str(data.get("path", "")),
+                }
+                self.logs.append(message)
+            elif kind == "diagnostic_failed":
+                self.diagnostic_state = {"status": "failed", "path": ""}
+                self.logs.append(message)
             self._refresh()
 
     QQuickWebEngineProfile.defaultProfile().installUrlSchemeHandler(b"gaussian", viewer_handler)
     backend = Backend()
+
+    class ViewerBridge(QObject):
+        """Narrow trusted bridge exposed only to the local viewer page."""
+
+        @Slot(result=str)
+        def ping(self) -> str:
+            return "gaussianos-viewer-bridge/v1"
+
+        @Slot(str, result=bool)
+        def commitScenePlacement(self, payload: str) -> bool:
+            return backend.setScenePlacement(payload)
+
+    viewer_bridge = ViewerBridge()
+    viewer_bridge.setObjectName("viewerBridge")
     # Pipeline threads emit this signal; force queued delivery to Backend's Qt
     # thread so no Worker ever updates a QML-bound property directly.
     backend.event.connect(backend.handleEvent, Qt.QueuedConnection)
@@ -1563,6 +1759,7 @@ def main() -> int:
         )
         context = shell_engine.rootContext()
         context.setContextProperty("backend", backend)
+        context.setContextProperty("viewerBridge", viewer_bridge)
         context.setContextProperty("startupWidth", 1600)
         context.setContextProperty("startupHeight", 900)
         context.setContextProperty("startupTheme", "light")

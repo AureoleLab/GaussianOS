@@ -282,8 +282,36 @@ def _run(request: StageRequest, result_path: Path, started_at: datetime) -> tupl
                 shutil.copy2(source, binary_model / source.name)
     except (OSError, RuntimeError, ValueError) as exc:
         message = str(exc)
-        code = ErrorCode.CUDA_OOM if "out of memory" in message.casefold() else ErrorCode.WORKER_CRASHED
-        return _failure(request, started_at, code, message), 10
+        lowered = message.casefold()
+        # A mapper which ran normally but could not establish geometry is a
+        # reconstruction quality failure, not a crashed Runtime.  The desktop
+        # must route this to MapAnything rather than terminate the pipeline.
+        no_model_signatures = (
+            "no good initial image pair",
+            "failed to create sparse model",
+            "mapper did not produce sparse/0",
+            "no images with matches found",
+        )
+        if any(signature in lowered for signature in no_model_signatures):
+            return _failure(
+                request,
+                started_at,
+                ErrorCode.OUTPUT_VALIDATION_FAILED,
+                message,
+                details={
+                    "failure_kind": "quality_gate",
+                    "quality_gate": "colmap_sparse_model_unavailable",
+                    "fallback_eligible": True,
+                },
+            ), 10
+        code = ErrorCode.CUDA_OOM if "out of memory" in lowered else ErrorCode.WORKER_CRASHED
+        return _failure(
+            request,
+            started_at,
+            code,
+            message,
+            details={"failure_kind": "infrastructure"},
+        ), 10
 
     try:
         metrics = parse_model_analyzer(analyzer_text)

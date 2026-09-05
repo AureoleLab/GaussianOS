@@ -3,6 +3,8 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -152,6 +154,53 @@ class SubprocessWorkerRunnerTests(unittest.TestCase):
         )
         self.assertIn('"pid"', execution)
         self.assertIn('"return_code":23', execution)
+
+    def test_worker_environment_drops_developer_python_context(self) -> None:
+        previous = {
+            name: os.environ.get(name)
+            for name in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX")
+        }
+        self.addCleanup(
+            lambda: [
+                os.environ.pop(name, None)
+                if value is None
+                else os.environ.__setitem__(name, value)
+                for name, value in previous.items()
+            ]
+        )
+        for name in previous:
+            os.environ[name] = "C:\\developer-only"
+
+        outcome = self.runner.run(self.request(payload="clean"), self.manifest, timeout_seconds=5)
+
+        record = json.loads(
+            (outcome.attempt_archive / "execution.json").read_text(encoding="utf-8")
+        )
+        environment = record["environment"]
+        self.assertIsNone(environment["PYTHONHOME"])
+        self.assertIsNone(environment["PYTHONPATH"])
+        self.assertEqual(environment["PYTHONNOUSERSITE"], "1")
+
+    def test_missing_dll_and_security_block_have_specific_codes(self) -> None:
+        self.assertEqual(
+            self.runner._classify_process_failure(
+                -1073741515, "The specified module could not be found"
+            ),
+            ErrorCode.DEPENDENCY_MISSING,
+        )
+        self.assertEqual(
+            self.runner._classify_process_failure(
+                1,
+                "Operation did not complete successfully because the file contains a virus",
+            ),
+            ErrorCode.SECURITY_BLOCKED,
+        )
+
+    def test_launch_access_denied_is_reported_as_security_block(self) -> None:
+        error = OSError("blocked by group policy")
+        code, kind = self.runner._classify_launch_failure(error)
+        self.assertEqual(code, ErrorCode.SECURITY_BLOCKED)
+        self.assertEqual(kind, "security_or_antivirus_block")
 
     def test_missing_result_json_is_a_protocol_failure(self) -> None:
         outcome = self.runner.run(

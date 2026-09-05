@@ -43,7 +43,7 @@ exclude = ["tests*"]
 "apps.desktop" = [
   "qml/**/*.qml",
   "qml/**/*.svg",
-  "viewer_web/*.html",
+  "viewer_web/*",
 ]
 
 [tool.pytest.ini_options]

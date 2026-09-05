@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtWebEngine
+import QtWebChannel
+import QtQuick.Dialogs
 
 Rectangle {
     id: root
@@ -17,6 +19,21 @@ Rectangle {
     property string viewerStatus: "Select a project"
     property string logText: ""
     property var timeline: []
+    property var bridge: null
+    property var scenePlacement: ({
+        "translation": [0, 0, 0],
+        "rotation_xyz_degrees": [0, 0, 0],
+        "scale_xyz": [1, 1, 1],
+        "scale_locked": true
+    })
+    property string viewerBackgroundMode: "theme"
+    property string viewerBackgroundColor: "#383838"
+    property bool viewerShowGrid: true
+    property bool viewerShowAxes: true
+    property string viewerCameraOverlay: "selected"
+    property bool viewerShowCameraPath: false
+    property bool viewerShowPoints: false
+    property string activeTransformTool: "select"
     property real activityLogHeight: theme.density.activityLogHeight
     property real draggedLogHeight: activityLogHeight
     property bool logDragging: false
@@ -45,6 +62,9 @@ Rectangle {
     signal exportRequested()
     signal viewerTitleChanged(string title)
     signal acceptanceResult(string result)
+    signal viewerPreferencesChanged(string mode, string color, bool showGrid,
+                                    bool showAxes, string cameraOverlay,
+                                    bool showCameraPath, bool showPoints)
 
     function boundedLogHeight(value) {
         return Math.max(
@@ -121,6 +141,59 @@ Rectangle {
                 function(result) { root.acceptanceResult(result) }
             )
         }
+    }
+    function effectiveBackground() {
+        if (viewerBackgroundMode === "theme") return String(theme.viewer)
+        if (viewerBackgroundMode === "dark-gray") return "#252525"
+        if (viewerBackgroundMode === "mid-gray") return "#505050"
+        if (viewerBackgroundMode === "white") return "#FFFFFF"
+        return viewerBackgroundColor || "#383838"
+    }
+    function applyViewerAppearance() {
+        if (!viewerActive) return
+        viewer.runJavaScript("viewerScene.setAppearance(" + JSON.stringify({
+            "background": effectiveBackground(),
+            "showGrid": viewerShowGrid,
+            "showAxes": viewerShowAxes,
+            "cameraOverlay": viewerCameraOverlay,
+            "showCameraPath": viewerShowCameraPath,
+            "showPoints": viewerShowPoints
+        }) + ")")
+    }
+    function applyScenePlacement(value) {
+        if (!viewerActive) return
+        var parsed = value
+        if (typeof value === "string") {
+            try { parsed = JSON.parse(value) } catch (error) { return }
+        }
+        viewer.runJavaScript("viewerScene.setPlacement(" + JSON.stringify(parsed) + ")")
+    }
+    function selectTransformTool(tool) {
+        activeTransformTool = tool
+        if (viewerActive)
+            viewer.runJavaScript("viewerScene.setTool(" + JSON.stringify(tool) + ")")
+    }
+    function persistViewerPreferences() {
+        viewerPreferencesChanged(
+            viewerBackgroundMode, viewerBackgroundColor,
+            viewerShowGrid, viewerShowAxes,
+            viewerCameraOverlay, viewerShowCameraPath,
+            viewerShowPoints
+        )
+        applyViewerAppearance()
+    }
+
+    onScenePlacementChanged: applyScenePlacement(scenePlacement)
+    onViewerBackgroundModeChanged: applyViewerAppearance()
+    onViewerBackgroundColorChanged: applyViewerAppearance()
+    onViewerShowGridChanged: applyViewerAppearance()
+    onViewerShowAxesChanged: applyViewerAppearance()
+    onViewerCameraOverlayChanged: applyViewerAppearance()
+    onViewerShowCameraPathChanged: applyViewerAppearance()
+    onViewerShowPointsChanged: applyViewerAppearance()
+    Connections {
+        target: root.theme
+        function onViewerChanged() { root.applyViewerAppearance() }
     }
 
     color: theme.canvas
@@ -221,13 +294,160 @@ Rectangle {
                 enabled: root.viewerActive
                 opacity: root.viewerActive ? 1 : 0
                 url: root.viewerUrl
-                onTitleChanged: root.viewerTitleChanged(title)
+                webChannel: WebChannel {
+                    registeredObjects: root.bridge ? [root.bridge] : []
+                }
+                onTitleChanged: {
+                    root.viewerTitleChanged(title)
+                    if (title.indexOf("ready|") === 0) {
+                        root.applyViewerAppearance()
+                        root.applyScenePlacement(root.scenePlacement)
+                        root.selectTransformTool(root.activeTransformTool)
+                    }
+                }
                 Behavior on opacity {
                     NumberAnimation {
                         duration: theme.motion.viewerDuration
                         easing.type: Easing.BezierSpline
                         easing.bezierCurve: theme.motion.standardCurve
                     }
+                }
+            }
+
+            Rectangle {
+                id: transformShelf
+                visible: root.viewerActive
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.leftMargin: 10
+                anchors.topMargin: 54
+                width: 40
+                height: transformTools.implicitHeight + 8
+                radius: theme.radiusControl
+                color: theme.chrome
+                opacity: 0.94
+                border.width: theme.hairline
+                border.color: theme.lineStrong
+                z: 8
+                Column {
+                    id: transformTools
+                    anchors.centerIn: parent
+                    spacing: 2
+                    Repeater {
+                        model: [
+                            {"id": "select", "icon": "select-tool", "tip": "Select Scene Root"},
+                            {"id": "move", "icon": "move-tool", "tip": "Move · G"},
+                            {"id": "rotate", "icon": "rotate-tool", "tip": "Rotate · R"},
+                            {"id": "scale", "icon": "scale-tool", "tip": "Scale · S"}
+                        ]
+                        delegate: IconButton {
+                            required property var modelData
+                            objectName: "viewerTool-" + modelData.id
+                            theme: root.theme; type: root.type
+                            iconName: modelData.icon
+                            toolTip: modelData.tip
+                            prominent: root.activeTransformTool === modelData.id
+                            onClicked: root.selectTransformTool(modelData.id)
+                        }
+                    }
+                }
+            }
+
+            IconButton {
+                id: appearanceButton
+                objectName: "viewerAppearanceButton"
+                visible: root.viewerActive
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.rightMargin: 12
+                anchors.topMargin: 52
+                z: 9
+                theme: root.theme; type: root.type
+                iconName: "background"
+                toolTip: "Viewport appearance and overlays"
+                prominent: appearancePopup.opened
+                onClicked: appearancePopup.opened ? appearancePopup.close() : appearancePopup.open()
+            }
+
+            Popup {
+                id: appearancePopup
+                objectName: "viewerAppearancePopup"
+                parent: viewport
+                x: viewport.width - width - 12
+                y: 88
+                width: 260
+                padding: 12
+                modal: false
+                focus: true
+                closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                z: 20
+                background: Rectangle {
+                    radius: theme.radiusPanel
+                    color: theme.chrome
+                    border.width: theme.hairline
+                    border.color: theme.lineStrong
+                }
+                contentItem: ColumnLayout {
+                    spacing: 8
+                    Text { text: "Viewport Background"; color: theme.ink; font.family: type.family; font.pixelSize: type.labelSize; font.weight: type.semibold }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: 5
+                        Repeater {
+                            model: [
+                                {"id": "theme", "label": "Theme"},
+                                {"id": "dark-gray", "label": "Dark"},
+                                {"id": "mid-gray", "label": "Gray"},
+                                {"id": "white", "label": "White"},
+                                {"id": "custom", "label": "Custom"}
+                            ]
+                            delegate: ToolbarButton {
+                                required property var modelData
+                                theme: root.theme; type: root.type
+                                text: modelData.label
+                                compact: true
+                                selected: root.viewerBackgroundMode === modelData.id
+                                onClicked: {
+                                    if (modelData.id === "custom") customBackgroundDialog.open()
+                                    else {
+                                        root.viewerBackgroundMode = modelData.id
+                                        root.persistViewerPreferences()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Divider { theme: root.theme; Layout.fillWidth: true }
+                    AppCheckBox { theme: root.theme; type: root.type; text: "Grid"; checked: root.viewerShowGrid; onToggled: { root.viewerShowGrid = checked; root.persistViewerPreferences() } }
+                    AppCheckBox { theme: root.theme; type: root.type; text: "World axes"; checked: root.viewerShowAxes; onToggled: { root.viewerShowAxes = checked; root.persistViewerPreferences() } }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Text { text: "Camera frusta"; color: theme.ink; font.family: type.family; font.pixelSize: type.labelSize; Layout.fillWidth: true }
+                        ComboField {
+                            theme: root.theme; type: root.type
+                            Layout.preferredWidth: 112
+                            model: ["Off", "Selected", "All"]
+                            currentIndex: root.viewerCameraOverlay === "off" ? 0 : root.viewerCameraOverlay === "all" ? 2 : 1
+                            onActivated: {
+                                root.viewerCameraOverlay = currentIndex === 0 ? "off" : currentIndex === 2 ? "all" : "selected"
+                                root.persistViewerPreferences()
+                            }
+                        }
+                    }
+                    AppCheckBox { theme: root.theme; type: root.type; text: "Camera path"; checked: root.viewerShowCameraPath; onToggled: { root.viewerShowCameraPath = checked; root.persistViewerPreferences() } }
+                    AppCheckBox { theme: root.theme; type: root.type; text: "Points"; checked: root.viewerShowPoints; onToggled: { root.viewerShowPoints = checked; root.persistViewerPreferences() } }
+                }
+            }
+
+            ColorDialog {
+                id: customBackgroundDialog
+                title: "Choose viewport background"
+                selectedColor: root.viewerBackgroundColor
+                onAccepted: {
+                    root.viewerBackgroundColor = String(selectedColor)
+                    root.viewerBackgroundMode = "custom"
+                    root.persistViewerPreferences()
                 }
             }
 

@@ -20,6 +20,10 @@
    contains both `Application` and `Runtime`, and `Start_GaussianOS.bat`
    launches directly.
 6. Run `Doctor.ps1` after installation or after moving the portable folder.
+7. For a Pipeline start or Worker failure, double-click
+   `Generate_Diagnostics.bat`. It creates a sendable ZIP in `Logs` containing
+   redacted system, Runtime integrity, GPU, and Worker execution diagnostics.
+   It does not include videos, project contents, or process environment values.
 
 Replace only `Application` when updating the Core. Keep `Runtime`, `Settings`,
 `Cache`, `Logs`, `Projects`, and `Exports` to preserve user and Runtime data.

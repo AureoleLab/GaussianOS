@@ -76,6 +76,7 @@ class TrainConfig(BaseModel):
     data_dir: str = Field(min_length=1)
     dataset_manifest: str = Field(min_length=1)
     gsplat_source: str = Field(min_length=1)
+    lpips_alexnet_checkpoint: str = Field(min_length=1)
     data_factor: int = Field(default=4, ge=1, le=8)
     max_steps: int = Field(ge=1000, le=30000)
     seed: int = Field(default=42, ge=0)
@@ -458,6 +459,14 @@ def _run(request: StageRequest, started: datetime) -> tuple[StageResult, int]:
         strategy.check_sanity(params, optimizers)
         strategy_state = strategy.initialize_state(scene_scale=float(parser.scene_scale) * 1.1)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizers["means"], gamma=0.01 ** (1.0 / config.max_steps))
+        lpips_checkpoint = Path(config.lpips_alexnet_checkpoint).resolve()
+        if not lpips_checkpoint.is_file():
+            raise FileNotFoundError(
+                f"locked LPIPS AlexNet checkpoint is missing: {lpips_checkpoint}"
+            )
+        if lpips_checkpoint.name != "alexnet-owt-7be5be79.pth":
+            raise ValueError("unexpected LPIPS AlexNet checkpoint filename")
+        torch.hub.set_dir(str(lpips_checkpoint.parent.parent))
         lpips_model = lpips.LPIPS(net="alex").to(device).eval()
         torch.cuda.reset_peak_memory_stats(device)
         initial = _evaluate(rasterization, params, holdout, 0, device, lpips_model, None)

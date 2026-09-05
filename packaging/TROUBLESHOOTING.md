@@ -17,3 +17,11 @@
 Runtime operations never overwrite `Projects` or `Exports`. A failed import or
 repair remains in `Runtime/.staging` only until cleanup and is never committed
 over a verified component.
+
+## Pipeline could not start
+
+The UI reports the structured error code and the failing executable or
+filesystem check. Double-click `Generate_Diagnostics.bat` and send the ZIP
+created in `Logs`. Do not install Python, change PATH, or permanently disable
+antivirus. If the report identifies quarantine or missing files, verify the
+release SHA-256 before restoring or narrowly allowing that verified release.

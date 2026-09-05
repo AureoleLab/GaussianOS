@@ -33,7 +33,10 @@ def test_p29_uses_one_theme_for_every_qml_surface() -> None:
 
 def test_p29_preserves_frontend_backend_actions_and_viewer_identity() -> None:
     main = (QML / "Main.qml").read_text(encoding="utf-8")
-    viewer = (DESKTOP / "viewer_web" / "index.html").read_text(encoding="utf-8")
+    viewer = "\n".join(
+        (DESKTOP / "viewer_web" / name).read_text(encoding="utf-8")
+        for name in ("index.html", "viewer.js")
+    )
 
     for action in (
         "createProject", "selectProject", "beginVideoImport", "configureVideoImport",

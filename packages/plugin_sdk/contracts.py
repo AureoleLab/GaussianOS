@@ -118,6 +118,7 @@ class ErrorCode(StrEnum):
     WORKER_CRASHED = "worker_crashed"
     CUDA_OOM = "cuda_oom"
     DEPENDENCY_MISSING = "dependency_missing"
+    SECURITY_BLOCKED = "security_blocked"
     INVALID_RESULT = "invalid_result"
     OUTPUT_VALIDATION_FAILED = "output_validation_failed"
     ARTIFACT_COMMIT_FAILED = "artifact_commit_failed"

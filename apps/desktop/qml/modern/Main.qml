@@ -46,6 +46,8 @@ ApplicationWindow {
     property string themeMode: useSavedSettings ? modernSettings.themeMode : startupTheme
     property string interfaceSize: useSavedSettings ? modernSettings.interfaceSize : "standard"
     property string typographyWeight: useSavedSettings ? modernSettings.typographyWeight : "balanced"
+    property string viewerBackgroundMode: useSavedSettings ? modernSettings.viewerBackgroundMode : "theme"
+    property string viewerBackgroundColor: useSavedSettings ? modernSettings.viewerBackgroundColor : "#383838"
     property bool sidebarWidthCustomized: useSavedSettings && modernSettings.sidebarPaneWidth >= theme.density.sidebarMinWidth
     property bool inspectorWidthCustomized: useSavedSettings && modernSettings.inspectorPaneWidth >= theme.density.inspectorMinWidth
     property bool activityLogHeightCustomized: useSavedSettings && modernSettings.activityLogHeight >= theme.density.activityLogCollapsedHeight
@@ -78,6 +80,14 @@ ApplicationWindow {
         property real sidebarPaneWidth: -1
         property real inspectorPaneWidth: -1
         property real activityLogHeight: -1
+        property string viewerBackgroundMode: "theme"
+        property string viewerBackgroundColor: "#383838"
+        property bool viewerShowGrid: true
+        property bool viewerShowAxes: true
+        property int viewerOverlaySettingsVersion: 0
+        property string viewerCameraOverlay: "selected"
+        property bool viewerShowCameraPath: false
+        property bool viewerShowPoints: false
     }
 
     Design.Motion { id: motionTokens; reducedMotion: useSavedSettings ? modernSettings.reduceMotion : false }
@@ -332,6 +342,12 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        if (useSavedSettings && modernSettings.viewerOverlaySettingsVersion < 2) {
+            modernSettings.viewerCameraOverlay = "selected"
+            modernSettings.viewerShowCameraPath = false
+            modernSettings.viewerShowPoints = false
+            modernSettings.viewerOverlaySettingsVersion = 2
+        }
         refreshBackend()
         refreshExportState()
         if (modernSettings.restoreLastProject && modernSettings.lastProjectId)
@@ -614,6 +630,20 @@ ApplicationWindow {
                     viewerStatus: backend ? backend.viewerStatus : ""
                     logText: backend ? backend.logText : ""
                     timeline: (window.current.sampling || {}).timeline || []
+                    bridge: viewerBridge
+                    scenePlacement: window.current.scene_placement || ({
+                        "translation": [0, 0, 0],
+                        "rotation_xyz_degrees": [0, 0, 0],
+                        "scale_xyz": [1, 1, 1],
+                        "scale_locked": true
+                    })
+                    viewerBackgroundMode: window.viewerBackgroundMode
+                    viewerBackgroundColor: window.viewerBackgroundColor
+                    viewerShowGrid: modernSettings.viewerShowGrid
+                    viewerShowAxes: modernSettings.viewerShowAxes
+                    viewerCameraOverlay: modernSettings.viewerCameraOverlay
+                    viewerShowCameraPath: modernSettings.viewerShowCameraPath
+                    viewerShowPoints: modernSettings.viewerShowPoints
                     activityLogHeight: window.effectiveActivityLogHeight
                     enabled: window.currentPage === "workspace"
                     opacity: window.currentPage === "workspace" ? 1 : 0
@@ -627,6 +657,19 @@ ApplicationWindow {
                     onExportRequested: window.requestSceneExport()
                     onViewerTitleChanged: function(title) { backend.viewerPageTitle(title) }
                     onAcceptanceResult: function(result) { backend.viewerAcceptanceResult(result) }
+                    onViewerPreferencesChanged: function(mode, color, showGrid, showAxes, cameraOverlay, showCameraPath, showPoints) {
+                        window.viewerBackgroundMode = mode
+                        window.viewerBackgroundColor = color
+                        if (useSavedSettings) {
+                            modernSettings.viewerBackgroundMode = mode
+                            modernSettings.viewerBackgroundColor = color
+                            modernSettings.viewerShowGrid = showGrid
+                            modernSettings.viewerShowAxes = showAxes
+                            modernSettings.viewerCameraOverlay = cameraOverlay
+                            modernSettings.viewerShowCameraPath = showCameraPath
+                            modernSettings.viewerShowPoints = showPoints
+                        }
+                    }
                     onLogHeightAdjusted: function(value, reset) {
                         if (reset) {
                             window.splitSnapping = true
@@ -782,6 +825,16 @@ ApplicationWindow {
                         theme: window.themeTokens
                         type: window.typeTokens
                         project: window.current
+                        viewerActive: viewerPane.viewerActive
+                        scenePlacement: window.current.scene_placement || ({
+                            "translation": [0, 0, 0],
+                            "rotation_xyz_degrees": [0, 0, 0],
+                            "scale_xyz": [1, 1, 1],
+                            "scale_locked": true
+                        })
+                        onScenePlacementRequested: function(payload) {
+                            backend.setScenePlacement(payload)
+                        }
                         onProfileRequested: function(profile) { backend.setProfile(profile) }
                         onSamplingRequested: function(mode, requested, intervalValue, intervalUnit, inFrame, outFrame) {
                             backend.setSampling(mode, requested, intervalValue, intervalUnit, inFrame, outFrame)
@@ -1581,6 +1634,29 @@ ApplicationWindow {
             font.family: type.monoFamily
             font.pixelSize: type.microSize
             wrapMode: Text.Wrap
+        }
+        UI.ToolbarButton {
+            theme: window.themeTokens; type: window.typeTokens
+            Layout.fillWidth: true
+            text: window.runtimeState.diagnostic
+                && window.runtimeState.diagnostic.status === "running"
+                ? "Generating diagnostic ZIP…"
+                : "Generate diagnostic ZIP"
+            iconName: "activity"
+            enabled: !window.runtimeState.diagnostic
+                || window.runtimeState.diagnostic.status !== "running"
+            onClicked: backend.generateDiagnostics()
+        }
+        Text {
+            Layout.fillWidth: true
+            visible: !!(window.runtimeState.diagnostic
+                && window.runtimeState.diagnostic.path)
+            text: window.runtimeState.diagnostic
+                ? String(window.runtimeState.diagnostic.path || "") : ""
+            color: theme.inkTertiary
+            font.family: type.monoFamily
+            font.pixelSize: type.microSize
+            wrapMode: Text.WrapAnywhere
         }
         RowLayout {
             Layout.fillWidth: true

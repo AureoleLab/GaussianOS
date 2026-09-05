@@ -7,6 +7,13 @@ Rectangle {
     required property var theme
     required property var type
     property var project: ({})
+    property bool viewerActive: false
+    property var scenePlacement: ({
+        "translation": [0, 0, 0],
+        "rotation_xyz_degrees": [0, 0, 0],
+        "scale_xyz": [1, 1, 1],
+        "scale_locked": true
+    })
     property bool running: project.status === "running"
     property int progress: Math.round(Number(project.progress || 0) * 100)
     readonly property var sampling: project.sampling || ({})
@@ -20,6 +27,7 @@ Rectangle {
     signal openInputsDirectoryRequested()
     signal openArtifactsDirectoryRequested()
     signal openExportsDirectoryRequested()
+    signal scenePlacementRequested(string payload)
 
     function profileIndex() {
         return Math.max(0, ["preview", "balanced", "quality"].indexOf(project.profile || "balanced"))
@@ -37,6 +45,46 @@ Rectangle {
         if (status === "interrupted" || status === "fallback_required") return theme.warning
         return theme.inkTertiary
     }
+    function transformVector(name, fallback) {
+        var value = scenePlacement ? scenePlacement[name] : null
+        return value && value.length === 3 ? value : fallback
+    }
+    function syncTransformFields() {
+        var groups = [
+            [locationFields, transformVector("translation", [0, 0, 0])],
+            [rotationFields, transformVector("rotation_xyz_degrees", [0, 0, 0])],
+            [scaleFields, transformVector("scale_xyz", [1, 1, 1])]
+        ]
+        for (var group = 0; group < groups.length; ++group)
+            for (var axis = 0; axis < 3; ++axis) {
+                var item = groups[group][0].itemAt(axis)
+                if (item) item.text = String(Number(groups[group][1][axis]))
+            }
+        scaleLock.checked = !scenePlacement || scenePlacement.scale_locked !== false
+    }
+    function placementPayload() {
+        function values(repeater) {
+            return [0, 1, 2].map(function(index) {
+                return Number(repeater.itemAt(index).text)
+            })
+        }
+        return JSON.stringify({
+            "translation": values(locationFields),
+            "rotation_xyz_degrees": values(rotationFields),
+            "scale_xyz": values(scaleFields),
+            "scale_locked": scaleLock.checked
+        })
+    }
+    function resetPlacement() {
+        scenePlacementRequested(JSON.stringify({
+            "translation": [0, 0, 0],
+            "rotation_xyz_degrees": [0, 0, 0],
+            "scale_xyz": [1, 1, 1],
+            "scale_locked": true
+        }))
+    }
+    onScenePlacementChanged: Qt.callLater(syncTransformFields)
+    Component.onCompleted: Qt.callLater(syncTransformFields)
 
     color: theme.chrome
 
@@ -75,6 +123,111 @@ Rectangle {
             }
 
             Divider { theme: root.theme; Layout.fillWidth: true }
+
+            ColumnLayout {
+                objectName: "sceneTransformInspector"
+                visible: root.viewerActive
+                Layout.fillWidth: true
+                Layout.margins: 16
+                spacing: 7
+                SectionHeader { theme: root.theme; type: root.type; Layout.fillWidth: true; title: "Scene Transform · Global" }
+                Text {
+                    Layout.fillWidth: true
+                    text: "Places the Scene Root, Gaussians, point cloud and every camera in the Z-up world."
+                    color: theme.inkSecondary
+                    font.family: type.family
+                    font.pixelSize: type.microSize
+                    wrapMode: Text.Wrap
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { Layout.preferredWidth: 54; text: "Location"; color: theme.inkSecondary; font.family: type.family; font.pixelSize: type.microSize }
+                    Repeater {
+                        id: locationFields
+                        model: ["X", "Y", "Z"]
+                        delegate: AppTextField {
+                            required property string modelData
+                            required property int index
+                            objectName: "sceneLocation" + modelData
+                            theme: root.theme; type: root.type
+                            Layout.fillWidth: true
+                            placeholderText: modelData
+                            validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { Layout.preferredWidth: 54; text: "Rotation"; color: theme.inkSecondary; font.family: type.family; font.pixelSize: type.microSize }
+                    Repeater {
+                        id: rotationFields
+                        model: ["X", "Y", "Z"]
+                        delegate: AppTextField {
+                            required property string modelData
+                            required property int index
+                            objectName: "sceneRotation" + modelData
+                            theme: root.theme; type: root.type
+                            Layout.fillWidth: true
+                            placeholderText: modelData + "°"
+                            validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
+                        }
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { Layout.preferredWidth: 54; text: "Scale"; color: theme.inkSecondary; font.family: type.family; font.pixelSize: type.microSize }
+                    Repeater {
+                        id: scaleFields
+                        model: ["X", "Y", "Z"]
+                        delegate: AppTextField {
+                            required property string modelData
+                            required property int index
+                            objectName: "sceneScale" + modelData
+                            theme: root.theme; type: root.type
+                            Layout.fillWidth: true
+                            placeholderText: modelData
+                            validator: DoubleValidator { bottom: 0.0001; top: 10000; notation: DoubleValidator.StandardNotation }
+                            onEditingFinished: {
+                                if (!scaleLock.checked) return
+                                for (var axis = 0; axis < 3; ++axis)
+                                    scaleFields.itemAt(axis).text = text
+                            }
+                        }
+                    }
+                }
+                AppCheckBox {
+                    id: scaleLock
+                    objectName: "sceneScaleLock"
+                    theme: root.theme; type: root.type
+                    text: "Lock proportional scale"
+                    checked: true
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    ToolbarButton {
+                        objectName: "sceneTransformReset"
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Reset"
+                        iconName: "refresh"
+                        compact: true
+                        onClicked: root.resetPlacement()
+                    }
+                    ToolbarButton {
+                        objectName: "sceneTransformApply"
+                        theme: root.theme; type: root.type
+                        Layout.fillWidth: true
+                        text: "Apply"
+                        iconName: "check"
+                        primary: true
+                        compact: true
+                        onClicked: root.scenePlacementRequested(root.placementPayload())
+                    }
+                }
+            }
+
+            Divider { visible: root.viewerActive; theme: root.theme; Layout.fillWidth: true }
 
             ColumnLayout {
                 Layout.fillWidth: true
