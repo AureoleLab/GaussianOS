@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any, Iterable
 from uuid import uuid4
 
+from packages.external_process import popen_external, run_external
+
 from .portable import CORE_VERSION, doctor_report, layout_paths, load_manifest
 
 
@@ -69,11 +71,12 @@ def _redaction_roots(extra: Iterable[Path] = ()) -> tuple[str, ...]:
 def redact_text(value: str, *, extra_roots: Iterable[Path] = ()) -> str:
     """Remove user/distribution/project absolute paths from diagnostic text."""
 
-    redacted = value
+    # Redact whole absolute paths before replacing known roots. Replacing a
+    # root first hides the drive prefix and leaves private filenames behind.
+    redacted = _WINDOWS_PATH.sub("<REDACTED_PATH>", value)
     for root in _redaction_roots(extra_roots):
         for spelling in {root, root.replace("\\", "/")}:
-            redacted = re.sub(re.escape(spelling), "<REDACTED_ROOT>", redacted, flags=re.I)
-    redacted = _WINDOWS_PATH.sub("<REDACTED_PATH>", redacted)
+            redacted = re.sub(re.escape(spelling) + r'''(?:[/\\][^\r\n"']*)?''', "<REDACTED_PATH>", redacted, flags=re.I)
     return redacted
 
 
@@ -181,7 +184,7 @@ def _gpu_report() -> dict[str, Any]:
         "--format=csv,noheader,nounits",
     ]
     try:
-        completed = subprocess.run(
+        completed = run_external(
             command,
             stdin=subprocess.DEVNULL,
             capture_output=True,
@@ -263,7 +266,7 @@ def _powershell_json(command: str, *, timeout: int = 20) -> dict[str, Any]:
     if not executable:
         return {"status": "unavailable", "message": "PowerShell was not found"}
     try:
-        completed = subprocess.run(
+        completed = run_external(
             [
                 executable,
                 "-NoLogo",
@@ -439,7 +442,7 @@ def _worker_probes() -> list[dict[str, Any]]:
             "return_code": None,
         }
         try:
-            process = subprocess.Popen(
+            process = popen_external(
                 argv,
                 cwd=runtime.worker_cwd,
                 env=environment,
@@ -449,7 +452,12 @@ def _worker_probes() -> list[dict[str, Any]]:
                 shell=False,
             )
             record["pid"] = process.pid
-            stdout, stderr = process.communicate(timeout=60)
+            try:
+                stdout, stderr = process.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                raise
             record.update(
                 {
                     "status": "ok" if process.returncode == 0 else "failed",

@@ -200,6 +200,7 @@ def main() -> int:
         help="create a privacy-safe support ZIP without starting the GUI",
     )
     parser.add_argument("--runtime-list", action="store_true", help="list locked portable runtime assets")
+    parser.add_argument("--runtime-setup", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--runtime-install", action="append", default=[], metavar="ASSET_ID", help="download and verify a locked runtime asset")
     parser.add_argument("--runtime-install-all", action="store_true", help="download every runtime asset that has an approved URL")
     parser.add_argument("--runtime-import", type=Path, help="import a verified Full Offline runtime or locked asset directory")
@@ -208,7 +209,20 @@ def main() -> int:
     parser.add_argument("--runtime-verify-full", action="store_true", help="hash every file in every Runtime component")
     parser.add_argument("--portable-smoke-video", type=Path, help="commit one analyzed video import without starting reconstruction")
     parser.add_argument("--portable-smoke-output", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-pipeline-video", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-pipeline-output", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-pipeline-frames", type=int, default=12, help=argparse.SUPPRESS)
+    parser.add_argument("--acceptance-pipeline-profile", choices=("preview", "balanced", "quality"), default="preview", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.runtime_setup:
+        from .runtime_setup import run_setup
+        return run_setup()
+    if args.acceptance_pipeline_video:
+        from .release_acceptance import run_pipeline_acceptance
+        return run_pipeline_acceptance(
+            args.acceptance_pipeline_video, frames=args.acceptance_pipeline_frames,
+            profile=args.acceptance_pipeline_profile, output=args.acceptance_pipeline_output,
+        )
     operation_report = portable_layout.logs / "runtime-operation-report.txt"
     if (
         args.runtime_list
@@ -376,6 +390,13 @@ def main() -> int:
             encoding="utf-8",
         )
         return result.exit_code
+    if frozen and (portable_layout.distribution_root / "managed-installation.json").is_file():
+        from .portable import verify_runtime
+        if verify_runtime():
+            from packages.external_process import run_external
+            prepared = run_external([sys.executable, "--runtime-setup"], check=False)
+            if prepared.returncode:
+                return prepared.returncode
     ui_settings = UiSettingsStore(
         args.acceptance_ui_settings or default_state / "ui-settings.json"
     )

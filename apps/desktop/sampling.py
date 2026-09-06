@@ -15,6 +15,7 @@ from typing import Callable, Iterable, Literal
 
 import numpy as np
 from PIL import Image
+from packages.external_process import popen_external, run_external
 
 
 SAMPLING_VERSION = "p2.7-trimmed-selection/v1"
@@ -133,7 +134,7 @@ def probe_video(source: str | Path, ffprobe: str) -> VideoProbe:
         "-of", "json",
         str(Path(source).resolve()),
     ]
-    completed = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+    completed = run_external(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
     if completed.returncode:
         raise RuntimeError(f"ffprobe failed: {completed.stderr[-1000:]}")
     try:
@@ -366,7 +367,7 @@ def analyze_video(
     analysis_width = min(192, probe.width)
     analysis_height = max(2, int(round(analysis_width * probe.height / probe.width / 2.0)) * 2)
     command = [ffmpeg, "-v", "error", "-i", str(Path(source).resolve()), "-map", "0:v:0", "-vf", f"scale={analysis_width}:{analysis_height}", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
-    process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = popen_external(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if process.stdout is None or process.stderr is None:
         raise RuntimeError("could not open FFmpeg analysis pipes")
     frame_bytes = analysis_width * analysis_height * 3
@@ -475,7 +476,7 @@ def extract_selected_frames(source: str | Path, selected_indices: Iterable[int],
         filter_path.write_text(f"select={expression}\n", encoding="utf-8")
         command.extend(["-filter_script:v", str(filter_path)])
     command.extend(["-fps_mode", "vfr", "-start_number", "0", str(output / "selected_%06d.png")])
-    completed = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+    completed = run_external(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
     if completed.returncode:
         raise RuntimeError(f"FFmpeg selected-frame extraction failed: {completed.stderr[-1000:]}")
     extracted = sorted(output.glob("selected_*.png"))

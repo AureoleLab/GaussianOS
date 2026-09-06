@@ -22,7 +22,7 @@ $packagesData = (Join-Path $root 'packages') + ';packages'
 
 if (Test-Path -LiteralPath $buildRoot) {
     $resolvedBuild = [IO.Path]::GetFullPath($buildRoot)
-    $allowedBuild = [IO.Path]::GetFullPath((Join-Path $root 'build'))
+    $allowedBuild = [IO.Path]::GetFullPath((Join-Path $root 'build')) + [IO.Path]::DirectorySeparatorChar
     if (-not $resolvedBuild.StartsWith($allowedBuild, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to clean unexpected build path: $resolvedBuild"
     }
@@ -30,7 +30,7 @@ if (Test-Path -LiteralPath $buildRoot) {
 }
 if (Test-Path -LiteralPath $package) {
     $resolvedPackage = [IO.Path]::GetFullPath($package)
-    if (-not $resolvedPackage.StartsWith($output, [StringComparison]::OrdinalIgnoreCase)) {
+    if (-not $resolvedPackage.StartsWith($output.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to replace unexpected package path: $resolvedPackage"
     }
     Remove-Item -LiteralPath $package -Recurse -Force
@@ -40,7 +40,7 @@ New-Item -ItemType Directory -Force -Path `
 
 Push-Location $root
 try {
-    & uv run --with 'pyinstaller==6.17.0' pyinstaller `
+    & uv run --no-sync --with 'pyinstaller==6.17.0' pyinstaller `
         --noconfirm `
         --clean `
         --onedir `
@@ -100,6 +100,7 @@ Copy-Item -LiteralPath `
     (Join-Path $root 'packaging\QUICKSTART.md'), `
     (Join-Path $root 'packaging\TROUBLESHOOTING.md'), `
     (Join-Path $root 'packaging\DIRECTORY_LAYOUT.md'), `
+    (Join-Path $root 'packaging\managed-installation.json'), `
     (Join-Path $root 'packaging\Start_GaussianOS.bat'), `
     (Join-Path $root 'packaging\Start_GaussianOS_Classic.bat'), `
     (Join-Path $root 'packaging\Doctor.ps1'), `

@@ -146,17 +146,18 @@ class RuntimePaths:
             factory = ROOT / ".gaussian-factory"
             worker_cwd = ROOT
         bundled_ffmpeg = factory / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
-        ffmpeg = str(bundled_ffmpeg) if bundled_ffmpeg.is_file() else (shutil.which("ffmpeg") or "ffmpeg")
+        ffmpeg = str(bundled_ffmpeg) if portable_context or bundled_ffmpeg.is_file() else (shutil.which("ffmpeg") or "ffmpeg")
         map_env = factory / "envs" / "mapanything-1.1.2"
         gsplat_env = factory / "envs" / "gsplat-1.5.3"
         map_python = (map_env / "python.exe") if (map_env / "python.exe").is_file() else (map_env / "Scripts" / "python.exe")
+        gsplat_python = (gsplat_env / "python.exe") if (gsplat_env / "python.exe").is_file() else (gsplat_env / "Scripts" / "python.exe")
         return cls(
             colmap=factory / "tools" / "colmap" / "3.13.0" / "bin" / "colmap.exe",
             ffmpeg=ffmpeg,
-            worker_python=map_python if portable_context else Path(sys.executable),
+            worker_python=gsplat_python if portable_context else Path(sys.executable),
             worker_cwd=worker_cwd,
             map_python=map_python,
-            gsplat_python=(gsplat_env / "python.exe") if (gsplat_env / "python.exe").is_file() else (gsplat_env / "Scripts" / "python.exe"),
+            gsplat_python=gsplat_python,
             gsplat_source=factory / "sources" / "gsplat-v1.5.3",
             map_source=factory / "sources" / "map-anything-v1.1.2",
             map_checkpoint=factory / "downloads" / "map-anything-apache-00f9c245" / "model.safetensors",
@@ -239,7 +240,6 @@ class PipelineController:
             "desktop": layout.application / "GaussianOS.exe",
             "worker_host": self.runtime.worker_cwd,
             "worker_python": self.runtime.worker_python,
-            "map_python": self.runtime.map_python,
             "gsplat_python": self.runtime.gsplat_python,
             "colmap": self.runtime.colmap,
             "ffmpeg": Path(self.runtime.ffmpeg),
@@ -292,6 +292,8 @@ class PipelineController:
             if not isinstance(relative, str) or not isinstance(expected, int):
                 continue
             component_root = layout.runtime.joinpath(*relative.replace("\\", "/").split("/"))
+            if not component.get("required", True) and not component_root.exists():
+                continue
             try:
                 actual = tree_size(component_root)
             except OSError as exc:
@@ -331,7 +333,7 @@ class PipelineController:
                 failure_kind="runtime_integrity",
                 diagnostics=base,
             )
-        if report.gpu_status in {"unavailable", "incompatible"}:
+        if report.gpu_status in {"unavailable", "incompatible", "unknown"}:
             code = next(
                 (issue.code for issue in report.issues if issue.category == "gpu"),
                 "gpu_unavailable",
@@ -1550,6 +1552,17 @@ class PipelineController:
 
     def _fallback(self, project: Project, images: Path, count: int, token: CancellationToken, event: Callable[[str, str, dict[str, Any]], None] | None) -> Path:
         state = self._stage(project, "fallback", event)
+        if self.enforce_preflight:
+            from .portable import ensure_runtime_phase
+
+            def download_progress(name, done, total):
+                self._raise_if_cancelled(token)
+                self._emit(event, "progress", "Preparing advanced reconstruction resources", {
+                    "stage": "fallback", "component": name, "downloaded_bytes": done,
+                    "download_total_bytes": total, "progress": done / total if total else 0,
+                })
+
+            ensure_runtime_phase("fallback", download_progress)
         manifest = self._manifest("recon_mapanything")
         config = {"config_version": "recon-mapanything/v1", "images_path": str(images), "expected_image_count": count, "mapanything_source": str(self.runtime.map_source), "mapanything_checkpoint": str(self.runtime.map_checkpoint), "mapanything_config": str(self.runtime.map_config), "dinov2_source": str(self.runtime.dino_source), "dinov2_checkpoint": str(self.runtime.dino_checkpoint), "colmap_executable": str(self.runtime.colmap), "trigger_minimum_registered_ratio": 0.9, "voxel_fraction": 0.015, "seed": 42}
         request = StageRequest(run_id=project.run_id or "p2", stage_id="fallback", stage_kind=StageKind.RECONSTRUCTION, plugin_id=manifest.plugin_id, plugin_version=manifest.plugin_version, profile=ExecutionProfile.PRODUCTION, config=config)

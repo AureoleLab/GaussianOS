@@ -198,7 +198,7 @@ def build_manifest(
     return {
         "schema_version": "gaussianos-build-manifest/v1",
         "product": product,
-        "version": "0.1.0-alpha",
+        "version": (Path(__file__).resolve().parents[1] / "packaging/VERSION").read_text(encoding="utf-8").strip(),
         "platform": "windows-x86_64",
         "built_at": datetime.now(timezone.utc).isoformat(),
         "features": features,

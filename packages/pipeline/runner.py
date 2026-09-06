@@ -24,6 +24,7 @@ from packages.artifact_store import (
     CommitRecord,
 )
 from packages.artifact_store.store import atomic_write_json
+from packages.external_process import external_environment, popen_external
 from packages.licensing import PolicyError, ProfilePolicyRegistry
 from packages.plugin_sdk import (
     ErrorCode,
@@ -207,6 +208,7 @@ class SubprocessWorkerRunner:
             [executable_parent, env.get("PATH", "")]
         ).rstrip(os.pathsep)
 
+        env = external_environment(env)
         execution_record: dict[str, Any] = {
             "schema_version": "gaussianos-worker-execution/v1",
             "state": "prepared",
@@ -255,7 +257,7 @@ class SubprocessWorkerRunner:
                     popen_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
                 else:
                     popen_options["start_new_session"] = True
-                process = subprocess.Popen(**popen_options)
+                process = popen_external(**popen_options)
                 execution_record.update({"state": "running", "pid": process.pid})
                 atomic_write_json(execution_path, execution_record)
                 return_code, stop_reason, stop_message = self._wait_for_process(
@@ -466,6 +468,10 @@ class SubprocessWorkerRunner:
             self.python_executable if item == "{python}" else item
             for item in manifest.entrypoint.command
         ]
+        if manifest.entrypoint.command[0] == "{python}":
+            # An isolated CPython ._pth intentionally ignores Python env vars.
+            # Set these at the interpreter boundary, before site is imported.
+            command[1:1] = ["-B", "-X", "utf8"]
         return command + [
             "--request-json",
             str(request_path),

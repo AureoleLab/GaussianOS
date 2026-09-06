@@ -1,0 +1,32 @@
+name: Beta clean Windows package acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release tag to test
+        required: true
+        default: v0.1.0-beta.1
+      core_sha256:
+        description: Expected SHA-256 of GaussianOS-Core-win-x64.zip
+        required: true
+permissions:
+  contents: read
+jobs:
+  packaged-windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and test actual release package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_TAG: ${{ inputs.tag }}
+          BETA_CORE_SHA256: ${{ inputs.core_sha256 }}
+        run: ./scripts/test_beta_clean_windows.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: beta-clean-windows-evidence
+          path: ${{ runner.temp }}/GaussianOS-Clean-Acceptance/evidence
+          if-no-files-found: warn

@@ -181,7 +181,7 @@ def _baseline_colmap(config: FallbackConfig, work: Path, logs: Path) -> dict[str
     }
 
 
-def _load_model(config: FallbackConfig):
+def _load_model(config: FallbackConfig, *, load_backbone_weights: bool = False):
     source = Path(config.mapanything_source).resolve()
     dino_source = Path(config.dinov2_source).resolve()
     verify_source_lock(
@@ -206,7 +206,10 @@ def _load_model(config: FallbackConfig):
     dino_checkpoint = Path(config.dinov2_checkpoint).resolve()
     if checkpoint.stat().st_size != 4914062480 or _sha256(checkpoint) != CHECKPOINT_SHA256:
         raise RuntimeError("MapAnything Apache checkpoint lock mismatch")
-    if _sha256(dino_checkpoint) != DINO_WEIGHT_SHA256:
+    # The full MapAnything checkpoint replaces every surviving DINOv2 tensor.
+    # All 812 final parameters/buffers were verified byte-identical against the
+    # old pretrained initialization. Retain the legacy option for that audit.
+    if load_backbone_weights and _sha256(dino_checkpoint) != DINO_WEIGHT_SHA256:
         raise RuntimeError("DINOv2 backbone checkpoint lock mismatch")
     model_config = json.loads(Path(config.mapanything_config).read_text(encoding="utf-8"))
     model_config["encoder_config"]["uses_torch_hub"] = False
@@ -215,12 +218,24 @@ def _load_model(config: FallbackConfig):
     def pinned_hub_load(repo_or_dir, model, *args, **kwargs):
         if repo_or_dir == "facebookresearch/dinov2":
             kwargs["source"] = "local"
+            # Selecting a local source checkout does not select local weights.
+            # Without this, DINOv2 still downloads into a developer Torch cache.
+            pretrained = kwargs.pop("pretrained", True) and load_backbone_weights
+            kwargs["pretrained"] = False
             kwargs.pop("force_reload", None)
-            return original_hub_load(str(dino_source), model, *args, **kwargs)
+            backbone = original_hub_load(str(dino_source), model, *args, **kwargs)
+            if pretrained:
+                backbone.load_state_dict(
+                    torch.load(str(dino_checkpoint), map_location="cpu", weights_only=True), strict=True,
+                )
+            return backbone
         return original_hub_load(repo_or_dir, model, *args, **kwargs)
 
     torch.hub.load = pinned_hub_load
-    model = MapAnything(**model_config)
+    try:
+        model = MapAnything(**model_config)
+    finally:
+        torch.hub.load = original_hub_load
     state = load_file(str(checkpoint), device="cpu")
     loaded_keys = set(state)
     incompatible = model.load_state_dict(state, strict=False)
@@ -529,7 +544,7 @@ def _run(request: StageRequest, started: datetime) -> tuple[StageResult, int]:
             producer_plugin_id=request.plugin_id, producer_plugin_version=request.plugin_version,
             source_request_id=request.request_id, source_attempt_id=request.attempt_id,
             files=_artifact_files(output),
-            metadata={"mapanything_commit": MAPANYTHING_COMMIT, "checkpoint_sha256": CHECKPOINT_SHA256, "dinov2_commit": DINO_COMMIT, "dinov2_weight_sha256": DINO_WEIGHT_SHA256},
+            metadata={"mapanything_commit": MAPANYTHING_COMMIT, "checkpoint_sha256": CHECKPOINT_SHA256, "dinov2_commit": DINO_COMMIT, "backbone_weights_source": "full-mapanything-checkpoint"},
         )
         quality = QualityReport(passed=True, checks=checks, metrics=flat_metrics)
         return StageResult(

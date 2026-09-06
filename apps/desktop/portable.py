@@ -13,6 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import stat
+import threading
 import shutil
 import subprocess
 import sys
@@ -20,13 +23,35 @@ import time
 import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass
+from functools import wraps
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Literal
 from uuid import uuid4
 
+from packages.file_lock import FileLock
+from packages.external_process import run_external
+
+_mutation_state = threading.local()
+
+
+def _serialized_runtime_mutation(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        if getattr(_mutation_state, "active", False):
+            return function(*args, **kwargs)
+        layout = layout_paths(create=True)
+        with FileLock(layout.cache / "RuntimeLocks" / "install.lock", operation="runtime install/repair",
+                      project_id="Runtime", timeout=0):
+            _mutation_state.active = True
+            try:
+                return function(*args, **kwargs)
+            finally:
+                _mutation_state.active = False
+    return locked
+
 
 RUNTIME_SCHEMA = "gaussianos-runtime-manifest/v3"
-CORE_VERSION = "0.1.0-alpha"
+CORE_VERSION = "0.1.0-beta.1"
 _DISTRIBUTION_ROOT_ENV = "GAUSSIANOS_DISTRIBUTION_ROOT"
 _MAX_DOWNLOAD_ATTEMPTS = 3
 
@@ -79,7 +104,9 @@ class DoctorReport:
             return 3
         if self.runtime_status != "ok":
             return 2
-        if self.gpu_status in {"unavailable", "incompatible"}:
+        if self.gpu_status in {"unavailable", "incompatible"} or (
+            self.gpu_status == "unknown" and any(issue.category == "gpu" for issue in self.issues)
+        ):
             return 4
         if self.external_tools_status != "ok":
             return 5
@@ -141,6 +168,9 @@ def _portable_relative(value: str, field: str) -> PurePosixPath:
         or path.is_absolute()
         or any(part in {"", ".", ".."} for part in path.parts)
         or ":" in path.parts[0]
+        or any(":" in part or "\x00" in part or part.endswith((" ", "."))
+               or re.fullmatch(r"(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", part)
+               for part in path.parts)
     ):
         raise ValueError(f"{field} must be a portable relative path: {value!r}")
     folded = [part.casefold() for part in path.parts]
@@ -193,7 +223,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
                 f"component {component.get('component_id', '<unknown>')} missing: {missing}"
             )
         component_id = str(component["component_id"])
-        if not component_id or component_id in seen:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", component_id) or component_id in seen:
             raise ValueError(f"duplicate or empty component_id: {component_id!r}")
         seen.add(component_id)
         _portable_relative(
@@ -234,6 +264,23 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     )
     if unknown_dependencies:
         raise ValueError(f"unknown component dependencies: {unknown_dependencies}")
+    graph = {c["component_id"]: c["dependencies"] for c in components}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name):
+        if name in visiting:
+            raise ValueError(f"Runtime dependency cycle at {name}")
+        if name in visited:
+            return
+        visiting.add(name)
+        for dependency in graph[name]:
+            visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in graph:
+        visit(name)
 
 
 def layout_paths(create: bool = False) -> PortableLayout:
@@ -463,7 +510,7 @@ def verify_runtime(*, full: bool = False) -> list[DoctorIssue]:
     runtime = layout_paths().runtime
     issues: list[DoctorIssue] = []
     for component in _components(manifest):
-        if component["required"]:
+        if component["required"] or _runtime_component_path(component, runtime).exists():
             issues.extend(
                 _verify_component(
                     component,
@@ -486,10 +533,11 @@ def _gpu_issues(manifest: dict[str, Any]) -> tuple[list[DoctorIssue], str]:
             )
         ], "unavailable"
     try:
-        query = subprocess.run(
+        extended = bool(manifest.get("minimum_compute_capability") or manifest.get("minimum_driver_major"))
+        query = run_external(
             [
                 "nvidia-smi",
-                "--query-gpu=memory.total,driver_version",
+                "--query-gpu=memory.total,driver_version,compute_cap" if extended else "--query-gpu=memory.total,driver_version",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -500,7 +548,9 @@ def _gpu_issues(manifest: dict[str, Any]) -> tuple[list[DoctorIssue], str]:
         if query.returncode != 0:
             raise OSError(query.stderr.strip() or "nvidia-smi query failed")
         rows = [line.split(",") for line in query.stdout.splitlines() if line.strip()]
-        memory = max(int(row[0].strip()) for row in rows)
+        # Workers currently use cuda:0. Checking the largest GPU could approve
+        # a machine whose actual selected device cannot execute the pipeline.
+        memory = int(rows[0][0].strip())
         minimum = int(manifest.get("minimum_vram_mib", 8192))
         if memory < minimum:
             return [
@@ -510,8 +560,18 @@ def _gpu_issues(manifest: dict[str, Any]) -> tuple[list[DoctorIssue], str]:
                     f"GPU VRAM is {memory} MiB; the locked runtime requires {minimum} MiB.",
                 )
             ], "incompatible"
+        if extended:
+            driver_major = int(rows[0][1].strip().split(".")[0])
+            capability = float(rows[0][2].strip())
+            minimum_driver = int(manifest.get("minimum_driver_major", 0))
+            if driver_major < minimum_driver:
+                return [DoctorIssue("gpu", "nvidia_driver_too_old",
+                        f"NVIDIA driver {rows[0][1].strip()} is too old; this Runtime requires driver {minimum_driver} or newer.")], "incompatible"
+            if capability < float(manifest.get("minimum_compute_capability", 0)):
+                return [DoctorIssue("gpu", "gpu_architecture_unsupported",
+                        f"GPU compute capability {capability} is below the supported minimum {manifest['minimum_compute_capability']}.")], "incompatible"
         return [], "ok"
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         return [
             DoctorIssue(
                 "gpu",
@@ -577,23 +637,37 @@ def doctor(*, full: bool = False) -> list[str]:
 
 
 def _safe_extract(
-    archive: Path, destination: Path, strip_components: int = 0
+    archive, destination: Path, strip_components: int = 0, *, max_bytes: int | None = None
 ) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     base = destination.resolve()
     with zipfile.ZipFile(archive) as source:
+        total = 0
+        entries = []
+        seen = set()
         for member in source.infolist():
-            parts = PurePosixPath(member.filename.replace("\\", "/")).parts[
-                strip_components:
-            ]
+            # Validate before stripping too: an absolute/traversing prefix must
+            # never be made acceptable by removing its first path segment.
+            relative = _portable_relative(member.filename.rstrip("/"), "archive member")
+            if stat.S_ISLNK(member.external_attr >> 16):
+                raise RuntimeError(f"Archive links are not supported: {member.filename}")
+            parts = relative.parts[strip_components:]
             if not parts:
                 continue
-            if any(part in {"", ".", ".."} for part in parts):
-                raise RuntimeError(f"unsafe archive member: {member.filename}")
             target = destination.joinpath(*parts)
             resolved = target.resolve()
             if resolved != base and base not in resolved.parents:
                 raise RuntimeError(f"unsafe archive member: {member.filename}")
+            key = str(resolved).casefold()
+            if key in seen:
+                raise RuntimeError(f"Duplicate archive target: {member.filename}")
+            seen.add(key)
+            if not member.is_dir():
+                total += member.file_size
+            entries.append((member, target))
+        if max_bytes is not None and total > max_bytes:
+            raise RuntimeError(f"Archive exceeds locked installed size: {total} > {max_bytes}")
+        for member, target in entries:
             if member.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
             else:
@@ -608,62 +682,38 @@ def _safe_extract(
 def _download(
     component: dict[str, Any],
     progress: Callable[[str, int, int], None] | None,
-) -> Path:
+) -> Path | list[Path]:
+    from .runtime_downloads import download_verified, SegmentedReader
+
     source = component["source"]
-    url = source.get("url")
     artifact = source.get("artifact")
     component_id = str(component["component_id"])
-    if not url or not isinstance(artifact, dict):
-        raise RuntimeError(
-            f"{component_id} is offline-only; use the approved Offline Runtime package."
-        )
-    expected_hash = str(artifact["sha256"])
-    expected_size = int(artifact["size_bytes"])
+    if not isinstance(artifact, dict) or not (source.get("url") or artifact.get("parts")):
+        raise RuntimeError(f"{component_id} has no published payload; use the verified Offline Runtime.")
     downloads = layout_paths(create=True).cache / "RuntimeDownloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    filename = Path(str(artifact.get("filename") or f"{component_id}.zip")).name
-    final = downloads / filename
-    partial = final.with_suffix(final.suffix + ".part")
-    if final.is_file():
-        if final.stat().st_size == expected_size and _sha256(final) == expected_hash:
-            return final
-        final.unlink()
-    last_error: Exception | None = None
-    for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
-        try:
-            offset = partial.stat().st_size if partial.exists() else 0
-            request = urllib.request.Request(
-                url, headers={"Range": f"bytes={offset}-"} if offset else {}
-            )
-            response = urllib.request.urlopen(request, timeout=60)
-            resumed = bool(offset and getattr(response, "status", None) == 206)
-            if offset and not resumed:
-                offset = 0
-            with response, partial.open("ab" if resumed else "wb") as output:
-                total = int(response.headers.get("Content-Length", "0")) + offset
-                done = offset
-                while block := response.read(4 * 1024 * 1024):
-                    output.write(block)
-                    done += len(block)
-                    if progress:
-                        progress(component_id, done, total)
-            if partial.stat().st_size != expected_size:
-                raise RuntimeError(
-                    f"downloaded size mismatch for {component_id}: "
-                    f"{partial.stat().st_size} != {expected_size}"
-                )
-            if _sha256(partial) != expected_hash:
-                raise RuntimeError(f"SHA-256 mismatch for {component_id}")
-            partial.replace(final)
-            return final
-        except Exception as exc:
-            last_error = exc
-            if attempt < _MAX_DOWNLOAD_ATTEMPTS:
-                time.sleep(min(2**attempt, 5))
-    raise RuntimeError(
-        f"download failed for {component_id} after {_MAX_DOWNLOAD_ATTEMPTS} attempts: "
-        f"{last_error}"
-    )
+    parts = artifact.get("parts") or [{**artifact, "url": source["url"]}]
+    paths = []
+    completed = 0
+    for part in parts:
+        filename = _portable_relative(str(part["filename"]), "artifact.filename")
+        if len(filename.parts) != 1:
+            raise ValueError("Artifact filenames must have no directory components")
+        target = downloads / filename.name
+        base = completed
+        callback = (lambda done, _total, base=base: progress(component_id, base + done, int(artifact["size_bytes"]))) if progress else None
+        paths.append(download_verified(str(part["url"]), target, size=int(part["size_bytes"]),
+                                       digest=str(part["sha256"]), progress=callback))
+        completed += int(part["size_bytes"])
+    if len(paths) > 1:
+        digest = hashlib.sha256()
+        with SegmentedReader(paths) as stream:
+            for block in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+                digest.update(block)
+        if completed != int(artifact["size_bytes"]) or digest.hexdigest() != artifact["sha256"]:
+            raise RuntimeError(f"Combined archive SHA-256 mismatch for {component_id}")
+        return paths
+    return paths[0]
 
 
 def _atomic_commit(staged: Path, destination: Path) -> Path:
@@ -713,6 +763,7 @@ def _stage_component(
         raise
 
 
+@_serialized_runtime_mutation
 def install(
     component_id: str,
     progress: Callable[[str, int, int], None] | None = None,
@@ -726,14 +777,39 @@ def install(
         dependency_path = _runtime_component_path(dependency_component)
         if _verify_component(dependency_component, dependency_path, full=False):
             install(dependency, progress)
+    artifact_info = component["source"].get("artifact", {})
+    downloads = layout_paths().cache / "RuntimeDownloads"
+    remaining_download = 0
+    for part in artifact_info.get("parts", [artifact_info]):
+        if not part.get("filename"):
+            continue
+        name = _portable_relative(str(part["filename"]), "artifact.filename")
+        if len(name.parts) != 1:
+            raise ValueError("Artifact filenames must have no directory components")
+        completed = downloads / name.name
+        partial = completed.with_name(completed.name + ".part")
+        cached = completed if completed.is_file() else partial
+        existing_bytes = cached.stat().st_size if cached.is_file() else 0
+        remaining_download += max(0, int(part["size_bytes"]) - existing_bytes)
+    peak_needed = remaining_download + int(component["installed_size_bytes"]) + 512 * 1024**2
+    if shutil.disk_usage(layout_paths().runtime).free < peak_needed:
+        raise OSError(f"Not enough free space to download and install {component_id}: {peak_needed} bytes required")
     archive = _download(component, progress)
     source = component["source"]
     artifact = source["artifact"]
+    needed = int(component["installed_size_bytes"]) + 512 * 1024**2
+    if shutil.disk_usage(layout_paths().runtime).free < needed:
+        raise OSError(f"Not enough space to install {component_id}: {needed} bytes required")
 
     def populate(staged: Path) -> None:
         archive_type = artifact.get("archive")
         if archive_type == "zip":
-            _safe_extract(archive, staged, int(artifact.get("strip_components", 0)))
+            if isinstance(archive, list):
+                from .runtime_downloads import SegmentedReader
+                with SegmentedReader(archive) as stream:
+                    _safe_extract(stream, staged, int(artifact.get("strip_components", 0)), max_bytes=int(component["installed_size_bytes"]))
+            else:
+                _safe_extract(archive, staged, int(artifact.get("strip_components", 0)), max_bytes=int(component["installed_size_bytes"]))
         elif archive_type == "file":
             relative = _portable_relative(
                 str(artifact["install_as"]), f"{component_id}.artifact.install_as"
@@ -746,7 +822,12 @@ def install(
                 f"unsupported artifact archive type for {component_id}: {archive_type}"
             )
 
-    return _stage_component(component, populate)
+    target = _stage_component(component, populate)
+    # Successfully committed components are their own verified cache. Retain
+    # only interrupted downloads, avoiding a duplicate installed Runtime.
+    for downloaded in archive if isinstance(archive, list) else [archive]:
+        downloaded.unlink(missing_ok=True)
+    return target
 
 
 def _offline_package_root(source: Path) -> tuple[Path, Path]:
@@ -767,6 +848,22 @@ def _offline_package_root(source: Path) -> tuple[Path, Path]:
     )
 
 
+@_serialized_runtime_mutation
+def ensure_runtime_phase(phase: str, progress=None) -> list[Path]:
+    """Install a complete capability automatically, retaining verified components."""
+    manifest = load_manifest()
+    installed = []
+    for component in _components(manifest):
+        component_phase = component.get("install_phase", "base")
+        if component_phase != phase:
+            continue
+        path = _runtime_component_path(component)
+        if _verify_component(component, path, full=False):
+            installed.append(install(str(component["component_id"]), progress))
+    return installed
+
+
+@_serialized_runtime_mutation
 def import_offline(source: str | Path) -> list[Path]:
     """Fully verify and atomically import every present manifest component."""
 
@@ -802,6 +899,7 @@ def import_offline(source: str | Path) -> list[Path]:
     return installed
 
 
+@_serialized_runtime_mutation
 def repair(
     component_id: str,
     offline_source: str | Path | None = None,
