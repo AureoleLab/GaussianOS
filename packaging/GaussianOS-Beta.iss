@@ -32,7 +32,7 @@ LicenseFile=..\LICENSE
 
 [Files]
 Source: "obsolete-core-files.tsv"; Flags: dontcopy
-Source: "{#CorePackage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#CorePackage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; BeforeInstall: MigrateObsoleteCore
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
@@ -50,13 +50,18 @@ Filename: "{app}\Application\GaussianOS.exe"; Description: "Launch GaussianOS an
 ; not owned by this uninstaller. Never recursively remove the application root.
 
 [Code]
-procedure CurStepChanged(CurStep: TSetupStep);
+var
+  CoreMigrationComplete: Boolean;
+
+procedure MigrateObsoleteCore;
 var
   Entries: TArrayOfString;
   I, Separator, Suffix: Integer;
   RelativePath, ExpectedHash, ExistingFile, BackupFile: String;
 begin
-  if CurStep <> ssInstall then Exit;
+  if CoreMigrationComplete then Exit;
+  CoreMigrationComplete := True;
+  { BeforeInstall runs after Restart Manager has closed file users. }
   { Exact paths and hashes from the audited previous Core manifest. Never
     recursively delete Application or any user-data directory during upgrades. }
   ExtractTemporaryFile('obsolete-core-files.tsv');
