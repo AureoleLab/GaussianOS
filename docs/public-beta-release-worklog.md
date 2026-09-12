@@ -148,3 +148,21 @@ successfully activated camera 1 and rendered its camera view. These two QML file
 were deployed only to the owned test installation for rapid diagnosis; its Core
 must be restored by the next actual installer before claiming exact final-package
 acceptance. Source Core build 8 and final regression are currently running.
+
+### Native dependency closure correction
+
+RC4 installed update was safely aborted by Restart Manager because the old
+manual acceptance GUI (PID 38048, recorded launch) was still running. That owned
+process was closed. Installer migration now runs in BeforeInstall, after file
+occupancy checks (commit 1307931); RC5 installer compiled, not yet installed.
+
+A static import audit found six Microsoft C++ DLL names missing beside COLMAP;
+System32 on the developer host provided them, and a developer-equipped Windows
+runner could also hide this. All 11 release CRT/OpenMP DLLs from the licensed
+VS2022 14.44 redistributable set were signature-verified, hash-locked, and bundled
+app-local, adding 2,039,070 bytes. Three fail-closed assembly tests passed. CI now
+requires those exact local files and executes native COLMAP/FFmpeg directly.
+The COLMAP component alone was repackaged; all model/environment payloads are
+unchanged. New Runtime sizes: base download 2,604,125,637 / install 4,246,826,940;
+fallback download 6,847,320,850 / install 8,922,116,082. Core metadata and installer
+must now be refreshed to carry this revised manifest before final E2E/CI.

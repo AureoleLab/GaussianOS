@@ -19,6 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from apps.desktop.portable import _sha256, tree_sha256, tree_size, validate_manifest
+from scripts.bundle_colmap_crt import bundle_colmap_crt
 
 RESERVE = 15_000_000_000
 SOURCE_EXCLUDES = {".git", "build", "tests", "docs", "__pycache__"}
@@ -107,6 +108,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--gsplat-extension", type=Path, required=True,
                         help="Multi-architecture csrc.pyd from build_beta_gsplat.ps1; checked against the manifest")
+    parser.add_argument("--vc-redist", type=Path, required=True, help="Locked release Visual C++ CRT/OpenMP redistributable root")
     args = parser.parse_args()
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
@@ -137,6 +139,11 @@ def main() -> int:
                 record["gsplat_extension_sha256"] = _sha256(extension)
         else:
             copy_tree(source, destination, budget, source_tree=relative.startswith("sources/"))
+        if component["component_id"] == "colmap":
+            crt_checks = bundle_colmap_crt(args.vc_redist, destination)
+            known = {check["path"].casefold() for check in component["verification"]}
+            component["verification"].extend(check for check in crt_checks if check["path"].casefold() not in known)
+            record["microsoft_runtime_version"] = "14.44.35211.0"
         # Every historical critical file must match, even when the whole
         # developer environment has legitimately changed since the last RC.
         for check in component["verification"]:

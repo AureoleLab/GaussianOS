@@ -14,6 +14,7 @@ shipped by a dependency.
 | gsplat | v1.5.3 | Apache-2.0 |
 | PyTorch | 2.9.1+cu130 | BSD-3-Clause |
 | CPython | 3.10 / 3.12 / 3.13 | Python-2.0 |
+| Microsoft Visual C++ CRT / OpenMP | 14.44.35211.0 (x64) | Microsoft distributable code terms |
 
 The Public Beta ships the full Apache-2.0 MapAnything checkpoint, retaining
 its DINOv2 encoder. It omits the redundant standalone DINOv2 pretraining
@@ -34,3 +35,8 @@ The full provenance, hashes, and research-only exclusions are recorded in
 `third_party/locks/` and `configs/profiles/production.json`. GPL FFmpeg builds,
 `plyfile`, VGGT, GLUEMAP, and ImprovedGS are not production distribution
 components.
+
+COLMAP includes unmodified Microsoft release CRT/OpenMP DLLs beside its EXE, so
+users do not need to locate DLLs or install a separate developer environment.
+Their source hashes are locked in `third_party/locks/microsoft-vc-runtime.json`;
+Microsoft terms apply: https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution.

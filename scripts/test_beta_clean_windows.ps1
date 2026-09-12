@@ -80,6 +80,23 @@ foreach ($component in @($components | Where-Object { -not $_.required })) {
     $p = Start-Process -FilePath $exe -ArgumentList @('--runtime-install',$component.component_id) -WorkingDirectory $profileRoot -WindowStyle Hidden -PassThru -Wait
     if ($p.ExitCode -notin @(0,2,4)) { throw "Runtime installer failed: $($component.component_id): $($p.ExitCode)" }
 }
+foreach ($component in $components) {
+    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $installed 'Runtime') $component.relative_install_path))) {
+        throw "Requested Runtime component did not install: $($component.component_id)"
+    }
+}
+$colmap = Join-Path $installed 'Runtime\tools\colmap\3.13.0\bin\colmap.exe'
+$crtLock = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../third_party/locks/microsoft-vc-runtime.json') -Raw | ConvertFrom-Json
+foreach ($file in $crtLock.files) {
+    $native = Join-Path (Split-Path $colmap) $file.filename
+    if (-not (Test-Path -LiteralPath $native) -or (Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash.ToLower() -ne $file.sha256) {
+        throw "COLMAP must carry its own locked C++ dependency: $($file.filename)"
+    }
+}
+& $colmap -h *> (Join-Path $evidence 'colmap-native-help.txt')
+if ($LASTEXITCODE -ne 0) { throw 'Native COLMAP cannot start from the installed package.' }
+& (Join-Path $installed 'Runtime\tools\ffmpeg\bin\ffmpeg.exe') -version *> (Join-Path $evidence 'ffmpeg-native-version.txt')
+if ($LASTEXITCODE -ne 0) { throw 'Native FFmpeg cannot start from the installed package.' }
 $p = Start-Process -FilePath $exe -ArgumentList @('--doctor','--runtime-verify-full') -WorkingDirectory $profileRoot -WindowStyle Hidden -PassThru -Wait
 $doctor = Get-Content -LiteralPath (Join-Path $installed 'Logs\doctor-report.json') -Raw | ConvertFrom-Json
 Copy-Item -LiteralPath (Join-Path $installed 'Logs\doctor-report.json') -Destination $evidence
