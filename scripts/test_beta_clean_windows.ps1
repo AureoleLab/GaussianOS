@@ -56,7 +56,13 @@ $env:PYTHONHOME = 'Z:\absent-python'
 $env:PYTHONPATH = 'Z:\absent-checkout'
 $env:CONDA_PREFIX = 'Z:\absent-conda'
 $exe = Join-Path $installed 'Application\GaussianOS.exe'
-foreach ($component in $components) {
+$firstUse = Start-Process -FilePath $exe -ArgumentList '--runtime-setup' -WorkingDirectory $profileRoot -WindowStyle Hidden -PassThru
+if (-not $firstUse.WaitForExit(1200000)) { $firstUse.Kill(); throw 'Graphical first-use setup timed out.' }
+if ($firstUse.ExitCode -ne 0) {
+    Copy-Item -LiteralPath (Join-Path $installed 'Logs\runtime-setup-error.txt') -Destination $evidence -ErrorAction SilentlyContinue
+    throw "Graphical first-use setup failed: $($firstUse.ExitCode)"
+}
+foreach ($component in @($components | Where-Object { -not $_.required })) {
     $p = Start-Process -FilePath $exe -ArgumentList @('--runtime-install',$component.component_id) -WorkingDirectory $profileRoot -WindowStyle Hidden -PassThru -Wait
     if ($p.ExitCode -notin @(0,2,4)) { throw "Runtime installer failed: $($component.component_id): $($p.ExitCode)" }
 }
