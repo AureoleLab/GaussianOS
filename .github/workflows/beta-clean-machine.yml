@@ -1,5 +1,8 @@
 name: Beta clean Windows package acceptance
 on:
+  push:
+    branches: [codex/public-beta-20260906]
+    paths: [docs/beta-ci-trigger.json]
   workflow_dispatch:
     inputs:
       tag:

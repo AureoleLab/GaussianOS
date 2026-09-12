@@ -1,13 +1,6 @@
-; Compile with /DCoreURL=... /DCoreSHA256=... /DCoreInstalledBytes=...
-; Core hash is pinned into this installer; Runtime hashes are pinned in Core.
-#ifndef CoreURL
-  #error CoreURL is required
-#endif
-#ifndef CoreSHA256
-  #error CoreSHA256 is required
-#endif
-#ifndef CoreInstalledBytes
-  #error CoreInstalledBytes is required
+; Core is embedded for reliable installation; Runtime remains component-based.
+#ifndef CorePackage
+  #error CorePackage is required
 #endif
 #ifndef ReleaseOutput
   #define ReleaseOutput "..\build\public-beta\release"
@@ -32,14 +25,13 @@ OutputDir={#ReleaseOutput}
 OutputBaseFilename=GaussianOS-0.1.0-beta.1-Setup-win-x64
 Compression=lzma2
 SolidCompression=yes
-ArchiveExtraction=auto
 CloseApplications=yes
 RestartApplications=no
 SetupLogging=yes
 LicenseFile=..\LICENSE
 
 [Files]
-Source: "{#CoreURL}"; DestName: "GaussianOS-Core.zip"; DestDir: "{app}"; Hash: "{#CoreSHA256}"; ExternalSize: {#CoreInstalledBytes}; Flags: external download extractarchive recursesubdirs ignoreversion
+Source: "{#CorePackage}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked

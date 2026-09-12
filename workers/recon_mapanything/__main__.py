@@ -21,7 +21,7 @@ import torch
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from safetensors.torch import load_file
 
-from packages.native_paths import native_tool_path
+from packages.native_paths import native_output_directory, native_tool_path
 from packages.plugin_sdk import (
     ArtifactFile,
     ArtifactManifest,
@@ -378,17 +378,18 @@ def _infer_and_export(config: FallbackConfig, output: Path) -> tuple[float, floa
     if not all(torch.isfinite(item["camera_poses"]).all() and torch.isfinite(item["depth_z"]).all() for item in predictions):
         raise RuntimeError("MapAnything returned NaN or Inf")
     peak = torch.cuda.max_memory_allocated(0) / (1024**3)
-    colmap_export.export_predictions_to_colmap(
-        outputs=predictions,
-        processed_views=views,
-        image_names=[path.name for path in images],
-        output_dir=str(output),
-        voxel_fraction=config.voxel_fraction,
-        data_norm_type=model.encoder.data_norm_type,
-        save_ply=True,
-        save_images=True,
-        skip_point2d=False,
-    )
+    with native_output_directory(output) as native_output:
+        colmap_export.export_predictions_to_colmap(
+            outputs=predictions,
+            processed_views=views,
+            image_names=[path.name for path in images],
+            output_dir=native_output,
+            voxel_fraction=config.voxel_fraction,
+            data_norm_type=model.encoder.data_norm_type,
+            save_ply=True,
+            save_images=True,
+            skip_point2d=False,
+        )
     (output / "checkpoint_alias_validation.json").write_text(
         json.dumps({"missing_keys": alias_count, "all_missing_keys_are_loaded_storage_aliases": True}, indent=2) + "\n",
         encoding="utf-8",

@@ -1,6 +1,9 @@
 # Run on a fresh GitHub-hosted Windows runner against the exact draft assets.
 # No GPU reconstruction is claimed here; the local GPU acceptance is separate.
 $ErrorActionPreference = 'Stop'
+$releaseConfig = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../docs/beta-ci-trigger.json') -Raw | ConvertFrom-Json
+if (-not $env:BETA_TAG) { $env:BETA_TAG = $releaseConfig.tag }
+if (-not $env:BETA_CORE_SHA256) { $env:BETA_CORE_SHA256 = $releaseConfig.core_sha256 }
 $root = Join-Path $env:RUNNER_TEMP 'GaussianOS-Clean-Acceptance'
 if (Test-Path -LiteralPath $root) { throw 'Clean acceptance directory already exists.' }
 $evidence = Join-Path $root 'evidence'
@@ -13,7 +16,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Core release asset download failed.' }
 $core = Join-Path $downloads 'GaussianOS-Core-win-x64.zip'
 $coreHash = (Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash.ToLower()
 if ($coreHash -ne $env:BETA_CORE_SHA256) { throw 'Core release asset SHA-256 mismatch.' }
-Expand-Archive -LiteralPath $core -DestinationPath $installed
+& gh release download $env:BETA_TAG --repo $env:GITHUB_REPOSITORY --pattern 'GaussianOS-0.1.0-beta.1-Setup-win-x64.exe' --dir $downloads
+if ($LASTEXITCODE -ne 0) { throw 'Installer release asset download failed.' }
+$setup = Join-Path $downloads 'GaussianOS-0.1.0-beta.1-Setup-win-x64.exe'
+$setupHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLower()
+if ($setupHash -ne $releaseConfig.installer_sha256) { throw 'Installer SHA-256 mismatch.' }
+$setupArgs = @('/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $installed + '"'),('/LOG="' + (Join-Path $evidence 'install.log') + '"'))
+$setupProcess = Start-Process -FilePath $setup -ArgumentList $setupArgs -WindowStyle Hidden -PassThru -Wait
+if ($setupProcess.ExitCode -ne 0) { throw "Real installer failed: $($setupProcess.ExitCode)" }
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::OpenRead($core)
+try {
+    $reader = [IO.StreamReader]::new($archive.GetEntry('build-manifest.json').Open())
+    try { $expectedBuildManifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
+} finally { $archive.Dispose() }
+if ([IO.File]::ReadAllText((Join-Path $installed 'build-manifest.json')) -ne $expectedBuildManifest) { throw 'Installer Core differs from independently hashed Core archive.' }
 $manifest = Get-Content -LiteralPath (Join-Path $installed 'runtime-manifest.json') -Raw | ConvertFrom-Json
 $cache = Join-Path $installed 'Cache\RuntimeDownloads'
 New-Item -ItemType Directory -Path $cache -Force | Out-Null
@@ -62,6 +79,21 @@ foreach ($entry in @(@('gsplat-1.5.3','workers.recon_colmap'),@('gsplat-1.5.3','
             if (-not ([IO.Path]::GetFullPath($path)).StartsWith($installed + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Worker import path escaped package: $path" }
         }
         $probes += $parsed
+        if ($entry[0] -eq 'mapanything-1.1.2') {
+            $nativeProbe = @'
+from pathlib import Path
+import pycolmap
+from packages.native_paths import native_output_directory
+root = Path.cwd() / '中文 Native Path' / ('long-' + 'x'*100) / ('long-' + 'y'*100)
+with native_output_directory(root):
+    Path('sparse').mkdir()
+    pycolmap.Reconstruction().write('sparse')
+assert (root / 'sparse/cameras.bin').is_file()
+print('pycolmap Unicode and long-path output: passed')
+'@
+            & $python -B -X utf8 -c $nativeProbe *> (Join-Path $evidence 'pycolmap-native-path.txt')
+            if ($LASTEXITCODE -ne 0) { throw 'Native Unicode/long-path reconstruction output failed.' }
+        }
     } finally { Pop-Location }
 }
 foreach ($ui in @('modern','classic')) {
@@ -72,6 +104,15 @@ foreach ($ui in @('modern','classic')) {
     if ($p.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $png)) { throw "$ui UI acceptance failed." }
 }
 Copy-Item -LiteralPath (Join-Path $installed 'Logs\desktop-ui.log') -Destination $evidence
-[ordered]@{ status='succeeded'; core_sha256=$coreHash; runner_os=[Environment]::OSVersion.VersionString;
+$sentinel = Join-Path $installed 'Projects\acceptance-preserve\project.json'
+New-Item -ItemType Directory -Path (Split-Path $sentinel) -Force | Out-Null
+[IO.File]::WriteAllText($sentinel, '{"test":"preserve user data"}')
+$uninstaller = Join-Path $installed 'unins000.exe'
+$uninstallArgs = @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="' + (Join-Path $evidence 'uninstall.log') + '"'))
+$uninstall = Start-Process -FilePath $uninstaller -ArgumentList $uninstallArgs -WindowStyle Hidden -PassThru -Wait
+if ($uninstall.ExitCode -ne 0 -or (Test-Path -LiteralPath $exe)) { throw 'Real uninstaller failed.' }
+if ([IO.File]::ReadAllText($sentinel) -ne '{"test":"preserve user data"}') { throw 'Uninstaller modified user project data.' }
+if (-not (Test-Path -LiteralPath (Join-Path $installed 'Runtime\envs\gsplat-1.5.3\python.exe'))) { throw 'Uninstaller removed reusable Runtime.' }
+[ordered]@{ status='succeeded'; core_sha256=$coreHash; installer_sha256=$setupHash; install_and_uninstall='passed'; runner_os=[Environment]::OSVersion.VersionString;
     worker_probes=$probes; scope='Fresh Windows runner, exact draft artifacts, empty profile, isolated PATH. No GPU pipeline claimed.' } |
     ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidence 'report.json') -Encoding utf8
