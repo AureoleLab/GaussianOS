@@ -5,6 +5,24 @@ param(
     [switch]$SkipArchive
 )
 $ErrorActionPreference = 'Stop'
+# Resolve the build tool before discarding the caller's tool/Conda/Qt PATH.
+$uvExecutable = (Get-Command uv -ErrorAction Stop).Source
+$buildEnvironment = Join-Path $PSScriptRoot '..\build\public-beta\gui-build-env'
+$buildEnvironment = [IO.Path]::GetFullPath($buildEnvironment)
+$buildPython = Join-Path $buildEnvironment 'Scripts\python.exe'
+$savedEnvironment = @{}
+Get-ChildItem Env: | Where-Object {
+    $_.Name -match '^(PATH$|PYTHON|CONDA|CUDA|QT_|QML|VIRTUAL_ENV$|UV_PROJECT_ENVIRONMENT$|UV_PYTHON_PREFERENCE$)'
+} | ForEach-Object {
+    $savedEnvironment[$_.Name] = $_.Value
+    Remove-Item -LiteralPath ('Env:' + $_.Name)
+}
+try {
+$env:PATH = (Join-Path $env:SystemRoot 'System32') + ';' + $env:SystemRoot
+$env:UV_PROJECT_ENVIRONMENT = $buildEnvironment
+$env:UV_PYTHON_PREFERENCE = 'only-managed'
+$env:PYTHONNOUSERSITE = '1'
+$env:PYTHONDONTWRITEBYTECODE = '1'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 $manifestSource = (Resolve-Path $RuntimeManifest).Path
@@ -40,7 +58,18 @@ New-Item -ItemType Directory -Force -Path `
 
 Push-Location $root
 try {
-    & uv run --no-sync --with 'pyinstaller==6.17.0' pyinstaller `
+    & $uvExecutable python install 3.13.9
+    if ($LASTEXITCODE -ne 0) { throw 'Managed build Python installation failed.' }
+    $managedPython = & $uvExecutable python find 3.13.9
+    if ($LASTEXITCODE -ne 0) { throw 'Managed build Python resolution failed.' }
+    $managedPython = $managedPython.Trim()
+    & $uvExecutable sync --frozen --extra desktop --extra compatibility --no-dev --python $managedPython
+    if ($LASTEXITCODE -ne 0) { throw 'Locked GUI environment synchronization failed.' }
+    & $uvExecutable pip install --python $buildPython --requirements packaging/build-requirements.txt
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned packager installation failed.' }
+    & $buildPython -B -c "import sys; from apps.desktop.main import _qt; assert sys.version_info[:3] == (3, 13, 9); _qt()"
+    if ($LASTEXITCODE -ne 0) { throw 'Isolated source Qt import failed.' }
+    & $buildPython -B -m PyInstaller `
         --noconfirm `
         --clean `
         --onedir `
@@ -66,6 +95,14 @@ try {
 }
 Move-Item -LiteralPath (Join-Path $pyinstallerDist 'GaussianOS') -Destination $application
 
+# Refuse native libraries captured from unrelated tools, even if they happen
+# to satisfy a DLL filename. Record source hashes outside the shipped payload.
+$nativeAudit = Join-Path $buildRoot 'native-origin-audit.json'
+& $buildPython -B (Join-Path $root 'scripts/audit_native_origins.py') `
+    --toc (Join-Path $pyinstallerWork 'GaussianOS\Analysis-00.toc') `
+    --application $application --report $nativeAudit
+if ($LASTEXITCODE -ne 0) { throw 'Native dependency provenance gate failed.' }
+
 # External Runtime Pythons must never use Application\_internal as cwd: that
 # directory contains CPython 3.13 extension modules from PyInstaller which can
 # shadow the 3.10/3.12 Runtime stdlib. Keep a pure-Python worker host beside it.
@@ -84,7 +121,7 @@ foreach ($directory in @('workers', 'packages', 'configs')) {
 }
 
 $pruneReport = Join-Path $buildRoot 'core-prune-report.json'
-& uv run python scripts/package_policy.py prune `
+& $buildPython -B (Join-Path $root 'scripts/package_policy.py') prune `
     --application $application `
     --report $pruneReport
 if ($LASTEXITCODE -ne 0) {
@@ -115,8 +152,26 @@ foreach ($directory in 'Runtime', 'Settings', 'Cache', 'Logs', 'Projects', 'Expo
     New-Item -ItemType File -Force -Path (Join-Path $path '.gaussianos-directory') | Out-Null
 }
 
+# The import-only CLI cannot open a native exception dialog. Fail the build
+# before archiving if Qt or WebEngine cannot actually load in the frozen EXE.
+$probe = Start-Process -FilePath (Join-Path $application 'GaussianOS.exe') `
+    -ArgumentList '--gui-import-probe' -WorkingDirectory $package -WindowStyle Hidden -PassThru
+if (-not $probe.WaitForExit(60000)) {
+    Stop-Process -Id $probe.Id -Force
+    throw 'Frozen GUI import probe timed out.'
+}
+if ($probe.ExitCode -ne 0) { throw 'Frozen GUI import probe failed; inspect Logs/gui-import-probe.json.' }
+$probeReport = Join-Path $package 'Logs\gui-import-probe.json'
+if ((Get-Content -LiteralPath $probeReport -Raw | ConvertFrom-Json).status -ne 'succeeded') {
+    throw 'Frozen GUI import result was not successful.'
+}
+Move-Item -LiteralPath $probeReport -Destination (Join-Path $buildRoot 'gui-import-probe.json')
+# Generated probe logs are evidence, never distributable data.
+
+
+
 $auditReport = Join-Path $buildRoot 'core-package-audit.json'
-& uv run python scripts/package_policy.py audit-core `
+& $buildPython -B (Join-Path $root 'scripts/package_policy.py') audit-core `
     --package $package `
     --report $auditReport
 if ($LASTEXITCODE -ne 0) {
@@ -124,7 +179,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Copy-Item -LiteralPath $auditReport -Destination (Join-Path $package 'package-audit.json')
 
-& uv run python scripts/package_policy.py build-manifest `
+& $buildPython -B (Join-Path $root 'scripts/package_policy.py') build-manifest `
     --package $package `
     --product 'GaussianOS Portable Core' `
     --feature 'ModernUI and ClassicUI' `
@@ -165,3 +220,12 @@ Write-Host (
     "Portable Core: {0} files; {1} unpacked bytes; {2} archive bytes" -f `
         $summary.file_count, $summary.unpacked_bytes, $summary.compressed_bytes
 )
+
+} finally {
+    Get-ChildItem Env: | Where-Object {
+        $_.Name -match '^(PATH$|PYTHON|CONDA|CUDA|QT_|QML|VIRTUAL_ENV$|UV_PROJECT_ENVIRONMENT$|UV_PYTHON_PREFERENCE$)'
+    } | ForEach-Object { Remove-Item -LiteralPath ('Env:' + $_.Name) }
+    foreach ($name in $savedEnvironment.Keys) {
+        Set-Item -LiteralPath ('Env:' + $name) -Value $savedEnvironment[$name]
+    }
+}

@@ -1,6 +1,14 @@
 # Run on a fresh GitHub-hosted Windows runner against the exact draft assets.
 # No GPU reconstruction is claimed here; the local GPU acceptance is separate.
 $ErrorActionPreference = 'Stop'
+$assetLinks = $env:BETA_ASSET_URLS_JSON | ConvertFrom-Json
+if (-not $assetLinks) { throw 'Temporary read-only draft asset links are missing.' }
+foreach ($link in $assetLinks) { Write-Output "::add-mask::$($link.url)" }
+function Download-BetaAsset([string]$Filename, [string]$Directory) {
+    $links = @($assetLinks | Where-Object { $_.filename -eq $Filename })
+    if ($links.Count -ne 1) { throw "No unique read-only link for $Filename" }
+    Invoke-WebRequest -Uri $links[0].url -OutFile (Join-Path $Directory $Filename) -TimeoutSec 1200 -MaximumRetryCount 3 -RetryIntervalSec 3
+}
 $releaseConfig = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../docs/beta-ci-trigger.json') -Raw | ConvertFrom-Json
 if (-not $env:BETA_TAG) { $env:BETA_TAG = $releaseConfig.tag }
 if (-not $env:BETA_CORE_SHA256) { $env:BETA_CORE_SHA256 = $releaseConfig.core_sha256 }
@@ -11,13 +19,11 @@ $downloads = Join-Path $root 'downloads'
 $installed = Join-Path $root '中文 Beta with spaces'
 New-Item -ItemType Directory -Path $evidence,$downloads,$installed | Out-Null
 if ($env:BETA_CORE_SHA256 -notmatch '^[a-f0-9]{64}$') { throw 'Expected Core SHA-256 is invalid.' }
-& gh release download $env:BETA_TAG --repo $env:GITHUB_REPOSITORY --pattern 'GaussianOS-Core-win-x64.zip' --dir $downloads
-if ($LASTEXITCODE -ne 0) { throw 'Core release asset download failed.' }
+Download-BetaAsset 'GaussianOS-Core-win-x64.zip' $downloads
 $core = Join-Path $downloads 'GaussianOS-Core-win-x64.zip'
 $coreHash = (Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash.ToLower()
 if ($coreHash -ne $env:BETA_CORE_SHA256) { throw 'Core release asset SHA-256 mismatch.' }
-& gh release download $env:BETA_TAG --repo $env:GITHUB_REPOSITORY --pattern 'GaussianOS-0.1.0-beta.1-Setup-win-x64.exe' --dir $downloads
-if ($LASTEXITCODE -ne 0) { throw 'Installer release asset download failed.' }
+Download-BetaAsset 'GaussianOS-0.1.0-beta.1-Setup-win-x64.exe' $downloads
 $setup = Join-Path $downloads 'GaussianOS-0.1.0-beta.1-Setup-win-x64.exe'
 $setupHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLower()
 if ($setupHash -ne $releaseConfig.installer_sha256) { throw 'Installer SHA-256 mismatch.' }
@@ -31,6 +37,14 @@ try {
     try { $expectedBuildManifest = $reader.ReadToEnd() } finally { $reader.Dispose() }
 } finally { $archive.Dispose() }
 if ([IO.File]::ReadAllText((Join-Path $installed 'build-manifest.json')) -ne $expectedBuildManifest) { throw 'Installer Core differs from independently hashed Core archive.' }
+$coreInventory = $expectedBuildManifest | ConvertFrom-Json
+foreach ($entry in $coreInventory.files) {
+    $path = [IO.Path]::GetFullPath((Join-Path $installed $entry.path))
+    if (-not $path.StartsWith($installed + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Core inventory path escaped installation.' }
+    if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -ne $entry.size_bytes -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLower() -ne $entry.sha256) {
+        throw "Installed Core content does not match its build manifest: $($entry.path)"
+    }
+}
 $manifest = Get-Content -LiteralPath (Join-Path $installed 'runtime-manifest.json') -Raw | ConvertFrom-Json
 $cache = Join-Path $installed 'Cache\RuntimeDownloads'
 New-Item -ItemType Directory -Path $cache -Force | Out-Null
@@ -39,10 +53,10 @@ New-Item -ItemType Directory -Path $cache -Force | Out-Null
 $components = @($manifest.components | Where-Object { $_.required -or $_.component_id -in @('mapanything-source','mapanything-environment','dinov2-source') })
 foreach ($component in $components) {
     foreach ($part in $component.source.artifact.parts) {
-        & gh release download $env:BETA_TAG --repo $env:GITHUB_REPOSITORY --pattern $part.filename --dir $cache
-        if ($LASTEXITCODE -ne 0) { throw "Runtime release download failed: $($part.filename)" }
+        Download-BetaAsset $part.filename $cache
     }
 }
+Remove-Item Env:BETA_ASSET_URLS_JSON
 # From this point, every application/worker launch uses the package with an
 # empty user profile and hostile Python/Conda variables. No checkout import.
 $profileRoot = Join-Path $root 'Empty Profile'
@@ -105,9 +119,12 @@ print('pycolmap Unicode and long-path output: passed')
 foreach ($ui in @('modern','classic')) {
     $png = Join-Path $evidence "$ui.png"
     $arguments = @('--ui',$ui,'--acceptance-evidence',('"' + $png + '"'),'--acceptance-delay-ms','15000')
-    $p = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $profileRoot -WindowStyle Hidden -PassThru
+    # A rendered WebEngine gate needs a visible application window, not SW_HIDE.
+    $p = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $profileRoot -WindowStyle Normal -PassThru
     if (-not $p.WaitForExit(90000)) { $p.Kill(); throw "$ui UI acceptance timed out." }
     if ($p.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $png)) { throw "$ui UI acceptance failed." }
+    $guiReport = Get-Content -LiteralPath ([IO.Path]::ChangeExtension($png, '.json')) -Raw | ConvertFrom-Json
+    if ($guiReport.status -ne 'succeeded' -or $guiReport.ui_loaded -ne $ui) { throw "$ui rendered UI report failed." }
 }
 Copy-Item -LiteralPath (Join-Path $installed 'Logs\desktop-ui.log') -Destination $evidence
 $sentinel = Join-Path $installed 'Projects\acceptance-preserve\project.json'

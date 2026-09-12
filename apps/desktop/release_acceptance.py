@@ -53,6 +53,10 @@ def run_pipeline_acceptance(video: Path, *, frames: int = 12, profile: str = "pr
     session = None
     save()
     try:
+        if report["frozen"]:
+            from .main import _qt
+            _qt()
+            report["gui_import_probe"] = "succeeded"
         runtime = RuntimePaths.discover()
         report["runtime"] = {key: str(value) for key, value in asdict(runtime).items()}
         before = doctor_report(full=True)

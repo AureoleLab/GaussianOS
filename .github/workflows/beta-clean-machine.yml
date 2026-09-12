@@ -23,7 +23,7 @@ jobs:
       - name: Download and test actual release package
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          BETA_ASSET_URLS_JSON: ${{ secrets.GAUSSIANOS_BETA_ASSET_URLS }}
           BETA_TAG: ${{ inputs.tag }}
           BETA_CORE_SHA256: ${{ inputs.core_sha256 }}
         run: ./scripts/test_beta_clean_windows.ps1

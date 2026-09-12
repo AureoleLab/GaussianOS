@@ -1333,7 +1333,7 @@ ApplicationWindow {
                                 width: Math.min(parent.width - 2, (parent.height - 2) * sourceAspect)
                                 height: Math.min(parent.height - 2, (parent.width - 2) / sourceAspect)
                                 url: backend ? backend.viewerUrl : "about:blank"
-                                webChannel: WebChannel { registeredObjects: [viewerBridge] }
+                                webChannel: WebChannel { Component.onCompleted: registerObject("viewerBridge", viewerBridge) }
                                 focus: true
                                 onTitleChanged: if (backend) backend.viewerPageTitle(title)
                             }

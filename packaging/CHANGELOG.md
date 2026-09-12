@@ -1,3 +1,13 @@
+# GaussianOS 0.1.0-beta.1
+
+- Adds a per-user Windows installer with automatic, verified reconstruction resource setup.
+- Reuses installed components and resumes interrupted downloads; downloads MapAnything resources when needed.
+- Ships independent Python workers and a precompiled gsplat CUDA extension, with isolated DLL and Python paths.
+- Fixes native COLMAP output under Unicode/long installation paths and standard fallback PLY Scene Bundle export.
+- Isolates the GUI build and checks every collected native dependency against its approved source.
+- Preserves ModernUI, ClassicUI, project formats and recovery, Viewer, Camera Timeline and complete Scene Bundle exports.
+- Verifies Runtime integrity and produces local diagnostics without including source media.
+
 # GaussianOS 0.1.0-alpha
 
 - Preserves ModernUI and ClassicUI on one production backend.

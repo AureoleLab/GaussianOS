@@ -127,7 +127,22 @@ Rectangle {
             return
         }
         if (cameraTimeline && timeline.length > 0) {
-            activateFrame(0)
+            // The first timeline record can be rejected during sampling.
+            // Exercise a camera that reconstruction actually registered.
+            var registered = -1
+            for (var index = 0; index < timeline.length; ++index) {
+                if (timeline[index].registration_status === "registered"
+                        && timeline[index].colmap_image_id !== undefined
+                        && timeline[index].colmap_image_id !== null) {
+                    registered = index
+                    break
+                }
+            }
+            if (registered < 0) {
+                acceptanceResult("No registered camera in timeline")
+                return
+            }
+            activateFrame(registered)
             viewer.runJavaScript(
                 "JSON.stringify(viewerCamera.state())",
                 function(result) { root.acceptanceResult(result) }
@@ -295,7 +310,7 @@ Rectangle {
                 opacity: root.viewerActive ? 1 : 0
                 url: root.viewerUrl
                 webChannel: WebChannel {
-                    registeredObjects: root.bridge ? [root.bridge] : []
+                    Component.onCompleted: registerObject("viewerBridge", root.bridge)
                 }
                 onTitleChanged: {
                     root.viewerTitleChanged(title)

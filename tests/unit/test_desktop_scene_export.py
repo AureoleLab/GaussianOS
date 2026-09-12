@@ -364,3 +364,35 @@ def test_final_publish_uses_staging_and_os_replace(
     assert ".staging-" in source.name
     assert destination == result.path
     assert result.path.is_dir()
+
+
+def test_native_fallback_pointcloud_exports_with_matching_coordinates_and_colors(
+    tmp_path, manifest_factory, gaussian_factory, cameras
+):
+    store, project, gaussians, points, transform = _ready_project(
+        tmp_path, manifest_factory, gaussian_factory, cameras
+    )
+    path = Path(project.stages["export"].artifact_paths[1])
+    vertices = np.empty(len(points.positions), dtype=[
+        ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+        ("red", "u1"), ("green", "u1"), ("blue", "u1"), ("alpha", "u1"),
+    ])
+    for index, name in enumerate(("x", "y", "z")):
+        vertices[name] = points.positions[:, index]
+    for index, name in enumerate(("red", "green", "blue")):
+        vertices[name] = points.colors_rgb[:, index]
+    vertices["alpha"] = 255
+    header = ("ply\nformat binary_little_endian 1.0\ncomment https://github.com/mikedh/trimesh\n"
+              f"element vertex {len(vertices)}\nproperty float x\nproperty float y\nproperty float z\n"
+              "property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\nend_header\n")
+    path.write_bytes(header.encode("ascii") + vertices.tobytes())
+    parent = tmp_path / "native-exports"
+    parent.mkdir()
+    result = SceneBundleExporter(store).export(project.project_id, project.run_id, parent)
+    restored = read_pointcloud_ply_payload(result.path / "pointcloud/scene_pointcloud.ply")
+    expected = (np.column_stack((points.positions, np.ones(len(points.positions)))) @ transform.T)[:, :3].astype(np.float32)
+    np.testing.assert_array_equal(restored.positions, expected)
+    np.testing.assert_array_equal(restored.colors_rgb, points.colors_rgb)
+    exported = read_gaussian_ply_payload(result.path / "gaussian/scene_gaussian.ply")
+    np.testing.assert_array_equal(exported.means, gaussians.means)
+    assert validate_scene_export(result.path)["manifest"]["schema_version"].endswith("/v2")

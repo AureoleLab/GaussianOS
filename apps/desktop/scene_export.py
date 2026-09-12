@@ -25,13 +25,13 @@ import numpy as np
 from packages.exportkit import (
     read_gaussian_ply,
     read_gaussian_ply_payload,
-    read_pointcloud_ply,
     read_pointcloud_ply_payload,
     write_pointcloud_ply,
 )
 from packages.quality.colmap import read_images_txt
 from packages.scene_bundle import PointCloudTensors, load_scene_bundle
 
+from .pointcloud_import import read_compatible_pointcloud
 from .project_store import Project, ProjectStore, StageState
 from .scene_placement import (
     BLENDER_TARGET_COORDINATE_SYSTEM,
@@ -770,7 +770,7 @@ class SceneBundleExporter:
                 raise SceneExportError(
                     f"Gaussian PLY {field} does not match the authoritative SceneBundle."
                 )
-        source_pointcloud = read_pointcloud_ply(pointcloud_path)
+        source_pointcloud = read_compatible_pointcloud(pointcloud_path)
         world_from_reconstruction = np.asarray(
             bundle.manifest.normalization_transform.source_to_scene,
             dtype=np.float64,

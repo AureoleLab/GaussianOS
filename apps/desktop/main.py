@@ -111,6 +111,8 @@ def _qt():
         from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineUrlRequestJob, QWebEngineUrlScheme, QWebEngineUrlSchemeHandler
         from PySide6.QtWebEngineQuick import QQuickWebEngineProfile, QtWebEngineQuick
     except ImportError as exc:  # keeps non-GUI callers free of Qt imports
+        if getattr(sys, "frozen", False):
+            raise RuntimeError(f"Installed GUI runtime could not load: {exc}. Reinstall the verified GaussianOS package.") from exc
         raise RuntimeError("Desktop GUI requires `uv sync --extra desktop`") from exc
     return locals()
 
@@ -200,6 +202,7 @@ def main() -> int:
         help="create a privacy-safe support ZIP without starting the GUI",
     )
     parser.add_argument("--runtime-list", action="store_true", help="list locked portable runtime assets")
+    parser.add_argument("--gui-import-probe", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--runtime-setup", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--runtime-install", action="append", default=[], metavar="ASSET_ID", help="download and verify a locked runtime asset")
     parser.add_argument("--runtime-install-all", action="store_true", help="download every runtime asset that has an approved URL")
@@ -214,6 +217,17 @@ def main() -> int:
     parser.add_argument("--acceptance-pipeline-frames", type=int, default=12, help=argparse.SUPPRESS)
     parser.add_argument("--acceptance-pipeline-profile", choices=("preview", "balanced", "quality"), default="preview", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    gui_acceptance: dict[str, Any] = {"viewer_ready": False, "interaction_valid": False}
+    if args.gui_import_probe:
+        import traceback
+        try:
+            _qt()
+            probe = {"status": "succeeded", "frozen": frozen, "executable": sys.executable}
+        except Exception as exc:
+            probe = {"status": "failed", "error": str(exc), "traceback": traceback.format_exc()}
+        portable_layout.logs.mkdir(parents=True, exist_ok=True)
+        (portable_layout.logs / "gui-import-probe.json").write_text(json.dumps(probe, indent=2), encoding="utf-8")
+        return 0 if probe["status"] == "succeeded" else 3
     if args.runtime_setup:
         from .runtime_setup import run_setup
         return run_setup()
@@ -1553,6 +1567,8 @@ def main() -> int:
             ):
                 return
             if title.startswith("ready|"):
+                gui_acceptance["viewer_ready"] = True
+                gui_acceptance["gaussian_count"] = int(title.partition("|")[2])
                 self.logs.append(f"Viewer GPU page ready: {title.partition('|')[2]} Gaussians")
                 if args.acceptance_evidence and not self.acceptance_started:
                     self.acceptance_started = True
@@ -1572,19 +1588,23 @@ def main() -> int:
         def viewerAcceptanceResult(self, result: str) -> None:
             self.logs.append(f"Viewer interaction acceptance: {result}")
             self.changed.emit()
-            def capture() -> None:
-                self.changed.emit()
-                def save() -> None:
-                    destination = args.acceptance_evidence.resolve()
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    root = engine.rootObjects()[0]
-                    if not root.grabWindow().save(str(destination)):
-                        self.logs.append(f"Screenshot save failed: {destination}")
-                    QTimer.singleShot(300, app.quit)
-                QTimer.singleShot(200, save)
-            # Large production scenes may need several frames for the first
-            # depth sort and GPU upload before a meaningful capture exists.
-            QTimer.singleShot(6_000, capture)
+            try:
+                parsed = json.loads(result)
+                gui_acceptance["interaction"] = parsed
+                if args.acceptance_camera_timeline:
+                    valid = (parsed.get("mode") == "camera" and parsed.get("imageId") is not None
+                             and bool(parsed.get("intrinsics")) and bool(parsed.get("size")))
+                else:
+                    before, after = parsed["before"], parsed["after"]
+                    valid = (before["yaw"] != after["yaw"] and before["distance"] != after["distance"]
+                             and before["target"] != after["target"]
+                             and after["scene"]["renderPassVertices"]["gaussians"] > 0
+                             and after["scene"]["bridgeReady"])
+                gui_acceptance["interaction_valid"] = bool(valid)
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                gui_acceptance["interaction_error"] = str(exc)
+            # Allow the real depth sort and GPU upload to render before capture.
+            QTimer.singleShot(6_000, lambda: capture_gui_acceptance("viewer interaction completed"))
 
         @Slot(str, str, object)
         def handleEvent(self, kind: str, message: str, payload: object) -> None:
@@ -1836,13 +1856,29 @@ def main() -> int:
     if args.acceptance_import_video:
         method = root.openProAcceptance if args.acceptance_import_pro else root.beginVideo
         QTimer.singleShot(250, lambda: method(str(args.acceptance_import_video.resolve())))
+    def capture_gui_acceptance(reason: str) -> None:
+        destination = args.acceptance_evidence.resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        saved = root.grabWindow().save(str(destination))
+        expected_ui = "classic" if args.acceptance_force_modern_failure else ui_selection.name
+        expected_viewer = bool(args.acceptance_camera_timeline or (backend.projects and not args.acceptance_import_video))
+        issues = []
+        if not saved:
+            issues.append("Rendered screenshot could not be saved")
+        if backend.active_ui != expected_ui:
+            issues.append(f"Requested {expected_ui}, loaded {backend.active_ui}")
+        if expected_viewer and not (gui_acceptance["viewer_ready"] and gui_acceptance["interaction_valid"]):
+            issues.append("Viewer rendering or camera interaction did not complete successfully")
+        gui_acceptance.update(status="failed" if issues else "succeeded", issues=issues, reason=reason,
+                              frozen=frozen, executable=sys.executable, ui_requested=expected_ui,
+                              ui_loaded=backend.active_ui, expected_viewer=expected_viewer,
+                              camera_timeline=bool(args.acceptance_camera_timeline), screenshot=str(destination),
+                              logs=list(backend.logs))
+        destination.with_suffix(".json").write_text(json.dumps(gui_acceptance, indent=2, ensure_ascii=False), encoding="utf-8")
+        app.exit(3 if issues else 0)
+
     if args.acceptance_evidence:
-        def acceptance_deadline() -> None:
-            destination = args.acceptance_evidence.resolve()
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            root.grabWindow().save(str(destination))
-            app.quit()
-        QTimer.singleShot(max(1_000, args.acceptance_delay_ms), acceptance_deadline)
+        QTimer.singleShot(max(1_000, args.acceptance_delay_ms), lambda: capture_gui_acceptance("capture deadline"))
     return app.exec()
 
 
