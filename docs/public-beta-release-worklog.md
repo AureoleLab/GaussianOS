@@ -1,6 +1,6 @@
 # Public Beta release work — 2026-09-06
 
-Status: **in progress; release authorized, but acceptance gates not yet met and no artifact published**.
+Status: **RC6 acceptance gates passed on 2026-09-19; see the closure record below and public-beta-acceptance.md. Historical checkpoints are retained.**.
 
 ## Authority and baseline
 
@@ -185,3 +185,27 @@ build/public-beta/evidence/{installed-core-integrity-rc6.json,colmap-native-depe
 Full final source regression: 276 passed, no skips, 55.56 seconds
 (pytest-regression-rc6.xml). Exact frozen GPU Pipeline and independent Windows
 acceptance are still pending; these results alone do not authorize a pass claim.
+
+### 2026-09-19 acceptance closure
+
+RC6 ordinary and real MapAnything fallback frozen EXE pipelines both passed,
+including full Runtime hashes before/after, actual external Scene Bundle export,
+package-confined worker paths and project reopen. Ordinary: 9,051 Gaussians,
+4,004 points, 12 cameras. Fallback: 61,961 Gaussians, 65,095 exported points,
+12 cameras. Both real Gaussian PLY exports loaded in all four independent
+consumers. All eight visible Modern/Classic orbit/Timeline checks passed.
+One-click diagnostic ZIP passed all three worker probes and excluded media/models.
+
+Independent Windows Server 2022 acceptance run 35417957032 succeeded against
+exact RC6 hashes: real installer, first-use Runtime setup, complete installed
+integrity, native tools, standalone Python 3.10/3.12 imports, Unicode/long paths,
+both rendered UI shells and uninstall preserving project data/Runtime. Runner
+screenshots were visually checked. The preceding run 35417489103 failed only
+because its script combined doctor and Runtime operation modes; the script was
+corrected, with no change to RC6 binaries. Temporary read-only CI asset secret
+was deleted. Full source regression remains 276 passed, no skips.
+
+See docs/public-beta-acceptance.md for exact hashes, size and disk accounting,
+acceptance scope and known hardware/signing limitations. All gates for the
+bounded Public Beta release are now met; no claim of second-machine GPU training
+or validation of other GPU families is made.

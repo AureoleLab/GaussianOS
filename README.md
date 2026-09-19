@@ -1,27 +1,50 @@
-# GaussianOS — Alpha
+# GaussianOS — Public Beta
 
 GaussianOS is a Windows desktop workflow for static 3D Gaussian Splatting:
-video/image import, quality-aware sampling, COLMAP reconstruction with a
-locked MapAnything fallback, gsplat training, WebGL viewing, and PLY /
-SceneBundle export. It is Alpha software, currently validated primarily on an
-RTX 5090. It does not claim support for dynamic scenes.
+video/image import, FFmpeg frame sampling, COLMAP reconstruction with automatic
+MapAnything fallback, gsplat training, Gaussian Viewer, Camera Timeline, and
+Scene Bundle export. Both ModernUI and ClassicUI remain available.
 
-## Portable Core
+## Install on Windows
 
-Download `GaussianOS-Portable-Core-win-x64.zip` from the Alpha Release, unzip
-it anywhere writable, and run `GaussianOS.bat`. No administrator rights are
-required. The first launch runs a runtime doctor. The Core archive deliberately
-does not contain Worker runtimes or model weights; its in-app runtime screen
-installs only version-locked, SHA-256-verified assets into `runtime/` beside the
-application, so the folder remains portable. Interrupted downloads resume.
+Download **GaussianOS-0.1.0-beta.1-Setup-win-x64.exe** from the
+[Windows Beta release](https://github.com/AureoleLab/GaussianOS/releases/tag/v0.1.0-beta.1).
+Run the installer and launch GaussianOS. No Python, Conda, CUDA Toolkit, PATH
+configuration, source checkout, terminal commands, or administrator rights are
+required. The first-use window automatically downloads and verifies the base
+Runtime; additional MapAnything resources are installed when fallback is needed.
+Interrupted downloads resume, and verified downloads are removed after installation.
 
-If the computer is offline, use the Runtime Import entry with a directory from
-the approved Full Offline bundle. The doctor clearly reports missing runtime,
-unsupported NVIDIA driver, and integrity failures. GPU reconstruction/training
-requires a supported NVIDIA GPU and adequate VRAM.
+Create a project, import video or images, choose a reconstruction profile, and
+run the Pipeline. Inspect the result in Viewer and Camera Timeline, then export
+a Scene Bundle containing Gaussian PLY, point cloud, cameras and scene manifest.
+Once the required components are installed, reconstruction can run offline.
 
-`GaussianOS-Full-Offline-win-x64.7z`, when published, contains only approved
-production runtime/model assets and is not stored in this source repository.
+The installer is 180.62 MB. A first base installation downloads about **2.78 GB**
+in total and occupies **4.91 GB**; installing every fallback component raises
+those totals to **9.63 GB downloaded / 13.83 GB installed**. Figures use decimal
+GB and exclude project data, temporary processing files and the saved installer.
+Keep additional free space for reconstruction. Updates reuse unchanged Runtime
+components; uninstall preserves Runtime, projects and user-created data.
+
+## Beta requirements and limits
+
+- 64-bit Windows 10/11 and an NVIDIA GPU, compute capability 7.5 or newer.
+- At least 8 GiB VRAM for the base workflow; 12 GiB or more for MapAnything,
+  with more required by larger scenes. NVIDIA R580-or-newer driver required.
+- GPU end-to-end execution has been tested on RTX 5090 with driver 591.44.
+  Other compiled GPU architectures have not yet been executed in acceptance.
+- Preview acceptance uses 12 selected frames and 1,000 training steps. It
+  verifies operation and exports, not reconstruction quality for arbitrary media.
+- The installer is unsigned; Windows may show an unknown-publisher warning.
+  Check the release SHA-256. Do not disable system security protections.
+- Dynamic scenes and CPU-only training are not supported.
+
+The Start menu includes Classic UI and Diagnostics. See the
+[quick start](packaging/QUICKSTART.md), [troubleshooting](packaging/TROUBLESHOOTING.md)
+and [release acceptance record](docs/public-beta-acceptance.md).
+The Core ZIP is an alternative for portable deployment; new users should choose
+the installer. Keep all sibling directories together when moving a portable copy.
 
 ## Development
 
@@ -52,7 +75,7 @@ SceneBundle assets, videos, caches, or credentials.
 
 ## Roadmap
 
-- P2.8: portable Windows Alpha and open-source release
+- Public Beta: per-user Windows installer and verified on-demand Runtime
 - P3: deferred; no P3 functionality is included in this release
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for distribution notices,
