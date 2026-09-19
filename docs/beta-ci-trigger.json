@@ -2,5 +2,6 @@
   "tag": "v0.1.0-beta.1",
   "core_sha256": "f2621c0987a5b59db4b194dd3251a5d914ed341047d788cf994bfaca22b65f58",
   "installer_sha256": "0c72503647b7aa6b93976c9b5cc13f67b2fbd592408e55bb4328fe1ed2b8bc0c",
-  "installer_bytes": 180619881
+  "installer_bytes": 180619881,
+  "acceptance_revision": 2
 }

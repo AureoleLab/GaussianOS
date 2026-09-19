@@ -97,10 +97,14 @@ foreach ($file in $crtLock.files) {
 if ($LASTEXITCODE -ne 0) { throw 'Native COLMAP cannot start from the installed package.' }
 & (Join-Path $installed 'Runtime\tools\ffmpeg\bin\ffmpeg.exe') -version *> (Join-Path $evidence 'ffmpeg-native-version.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Native FFmpeg cannot start from the installed package.' }
-$p = Start-Process -FilePath $exe -ArgumentList @('--doctor','--runtime-verify-full') -WorkingDirectory $profileRoot -WindowStyle Hidden -PassThru -Wait
+# --doctor already performs a full hash audit. Combining it with a Runtime
+# operation selects that operation instead and does not emit doctor JSON.
+Write-Output 'Installer, Core inventory, Runtime setup and native tools passed.'
+$p = Start-Process -FilePath $exe -ArgumentList @('--doctor') -WorkingDirectory $profileRoot -WindowStyle Hidden -PassThru -Wait
 $doctor = Get-Content -LiteralPath (Join-Path $installed 'Logs\doctor-report.json') -Raw | ConvertFrom-Json
 Copy-Item -LiteralPath (Join-Path $installed 'Logs\doctor-report.json') -Destination $evidence
-if ($doctor.core_status -ne 'ok' -or $doctor.runtime_status -ne 'ok') { throw 'Packaged full Runtime integrity failed.' }
+if (-not $doctor.full_verification -or $doctor.core_status -ne 'ok' -or $doctor.runtime_status -ne 'ok') { throw 'Packaged full Runtime integrity failed.' }
+Write-Output 'Full installed Runtime integrity passed.'
 $probes = @()
 foreach ($entry in @(@('gsplat-1.5.3','workers.recon_colmap'),@('gsplat-1.5.3','workers.train_gsplat'),@('mapanything-1.1.2','workers.recon_mapanything'))) {
     $python = Join-Path $installed "Runtime\envs\$($entry[0])\python.exe"
@@ -133,6 +137,7 @@ print('pycolmap Unicode and long-path output: passed')
         }
     } finally { Pop-Location }
 }
+Write-Output 'Standalone workers and Unicode native output passed.'
 foreach ($ui in @('modern','classic')) {
     $png = Join-Path $evidence "$ui.png"
     $arguments = @('--ui',$ui,'--acceptance-evidence',('"' + $png + '"'),'--acceptance-delay-ms','15000')
