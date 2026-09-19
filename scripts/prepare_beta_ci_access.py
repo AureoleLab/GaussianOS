@@ -14,7 +14,7 @@ REPO = 'AureoleLab/GaussianOS'
 SECRET = 'GAUSSIANOS_BETA_ASSET_URLS'
 
 def gh(*args):
-    return subprocess.check_output(['gh', *args], text=True).strip()
+    return subprocess.check_output(['gh', *args], text=True, encoding='utf-8').strip()
 
 def main():
     manifest = json.loads(Path('dist/runtime-manifest.json').read_text(encoding='utf-8'))

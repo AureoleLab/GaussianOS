@@ -166,3 +166,22 @@ The COLMAP component alone was repackaged; all model/environment payloads are
 unchanged. New Runtime sizes: base download 2,604,125,637 / install 4,246,826,940;
 fallback download 6,847,320,850 / install 8,922,116,082. Core metadata and installer
 must now be refreshed to carry this revised manifest before final E2E/CI.
+
+### 2026-09-19 RC6 exact installation acceptance
+
+Resumed from the user-requested pause. The exact RC6 installer SHA-256 is
+0c72503647b7aa6b93976c9b5cc13f67b2fbd592408e55bb4328fe1ed2b8bc0c
+(180,619,881 bytes). Core ZIP SHA-256 is
+f2621c0987a5b59db4b194dd3251a5d914ed341047d788cf994bfaca22b65f58
+(262,869,083 bytes). Runtime manifest SHA-256 is
+081ddfc5e4243610ba15c72cf9c54b98856ddf120da9bdee32646296794f253f.
+
+Actual RC6 installer exited 0 in the existing owned Unicode-path installation.
+All 3,139 inventory files matched their sizes and SHA-256; all 11 app-local CRT
+files matched the lock. Native COLMAP starts with only Windows system paths.
+The post-fix static import audit found no missing native dependencies and no
+remaining external MSVC 140/OpenMP imports. Evidence is under
+build/public-beta/evidence/{installed-core-integrity-rc6.json,colmap-native-dependencies-rc6.json,colmap-rc6-help.txt}.
+Full final source regression: 276 passed, no skips, 55.56 seconds
+(pytest-regression-rc6.xml). Exact frozen GPU Pipeline and independent Windows
+acceptance are still pending; these results alone do not authorize a pass claim.
